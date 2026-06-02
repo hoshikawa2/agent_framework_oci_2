@@ -1,0 +1,32 @@
+services:
+  telecom-mcp:
+    build:
+      context: ./mcp_servers/telecom_mcp_server
+    ports:
+      - "8100:8100"
+
+  retail-mcp:
+    build:
+      context: ./mcp_servers/retail_mcp_server
+    ports:
+      - "8200:8200"
+
+  backend:
+    build:
+      context: .
+      dockerfile: agent_template_backend/Dockerfile
+    env_file: .env
+    environment:
+      MCP_SERVERS_CONFIG_PATH: /app/config/mcp_servers.docker.yaml
+    ports:
+      - "8000:8000"
+    depends_on:
+      - telecom-mcp
+      - retail-mcp
+
+  frontend:
+    image: nginx:alpine
+    volumes:
+      - ./agent_frontend:/usr/share/nginx/html:ro
+    ports:
+      - "5173:80"

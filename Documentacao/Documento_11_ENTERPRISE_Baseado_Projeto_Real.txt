@@ -1,0 +1,486 @@
+
+DOCUMENTO 11 ENTERPRISE
+TUTORIAL COMPLETO BASEADO NO PROJETO IMPLEMENTADO
+AGENT FRAMEWORK OCI + AGENT_TEMPLATE_BACKEND
+
+=====================================================================
+CAPÍTULO 1 – O QUE SERÁ CONSTRUÍDO
+=====================================================================
+
+Este tutorial não é conceitual.
+
+Ele foi elaborado a partir do projeto real agent_framework_oci.
+
+O objetivo será entender como o projeto template funciona e como criar
+um novo agente seguindo exatamente a arquitetura implementada.
+
+O projeto já possui dois agentes configurados:
+
+- telecom_contas
+- retail_orders
+
+Eles estão registrados em:
+
+config/agents.yaml
+
+Trecho encontrado no projeto:
+
+default_agent_id: telecom_contas
+
+agents:
+  telecom_contas
+  retail_orders
+
+Ou seja, o framework suporta múltiplos agentes utilizando o mesmo núcleo.
+
+=====================================================================
+CAPÍTULO 2 – ENTENDENDO A ARQUITETURA REAL
+=====================================================================
+
+Frontend
+↓
+FastAPI
+↓
+ChannelGateway
+↓
+IdentityResolver
+↓
+AgentWorkflow
+↓
+Router
+↓
+Agent Runtime
+↓
+MCP Tool Router
+↓
+MCP Server
+↓
+OCI Generative AI
+
+Os componentes já estão implementados dentro do framework.
+
+O desenvolvedor normalmente não altera o framework.
+
+Ele cria novos agentes utilizando as extensões previstas.
+
+=====================================================================
+CAPÍTULO 3 – ESTRUTURA REAL DO BACKEND
+=====================================================================
+
+agent_template_backend/
+
+app/
+config/
+workflows/
+
+O arquivo principal é:
+
+app/main.py
+
+Neste arquivo são inicializados:
+
+Telemetry
+LLM
+Memory
+MCP Tool Router
+Session Repository
+Checkpoint Repository
+Cache
+Agent Workflow
+
+Ou seja, o bootstrap da aplicação já está pronto.
+
+=====================================================================
+CAPÍTULO 4 – AGENTS.YAML
+=====================================================================
+
+Arquivo:
+
+config/agents.yaml
+
+Neste arquivo estão registrados os agentes.
+
+Exemplo encontrado:
+
+telecom_contas
+
+retail_orders
+
+Cada agente possui:
+
+agent_id
+prompt_policy_path
+routing_config_path
+guardrails_config_path
+judges_config_path
+mcp_servers_config_path
+tools_config_path
+
+Isto significa que cada agente possui sua própria configuração de:
+
+Prompt
+Guardrails
+Judges
+Policies
+
+sem necessidade de alterar código.
+
+=====================================================================
+CAPÍTULO 5 – CRIANDO UM NOVO AGENTE
+=====================================================================
+
+Vamos criar:
+
+seguros_agent
+
+Passo 1
+
+Adicionar em agents.yaml
+
+agent_id: seguros_agent
+
+Passo 2
+
+Criar diretório:
+
+config/agents/seguros_agent
+
+Passo 3
+
+Criar:
+
+prompt_policy.yaml
+guardrails.yaml
+judges.yaml
+
+Passo 4
+
+Adicionar metadata:
+
+domain: seguros
+
+Neste momento o framework já reconhece a existência do agente.
+
+=====================================================================
+CAPÍTULO 6 – ROUTING.YAML
+=====================================================================
+
+O projeto possui:
+
+config/routing.yaml
+
+Foi identificado no projeto:
+
+router:
+  mode: router
+
+state_policies:
+  WAITING_BILLING_CONFIRMATION
+  WAITING_PRODUCT_CONFIRMATION
+  WAITING_ORDER_CONFIRMATION
+  WAITING_SUPPORT_CONFIRMATION
+
+Além disso existem intents.
+
+Exemplo real:
+
+billing_invoice_explanation
+
+product_services_information
+
+retail_order_tracking
+
+=====================================================================
+CAPÍTULO 7 – CRIANDO NOVAS INTENTS
+=====================================================================
+
+Criar:
+
+seguros_consulta_apolice
+
+seguros_consulta_sinistro
+
+seguros_consulta_pagamento
+
+Cada intent deve possuir:
+
+name
+domain
+agent
+description
+priority
+mcp_tools
+keywords
+examples
+
+A recomendação é sempre criar intents orientadas a negócio.
+
+Nunca orientadas a frases.
+
+Errado:
+
+cliente_falou_apolice
+
+Correto:
+
+seguros_consulta_apolice
+
+=====================================================================
+CAPÍTULO 8 – MCP NO PROJETO REAL
+=====================================================================
+
+O projeto utiliza:
+
+create_mcp_tool_router()
+
+identificado em main.py.
+
+Isso significa que todo agente já possui suporte MCP.
+
+O agente não chama APIs diretamente.
+
+Ele solicita:
+
+consultar_apolice
+
+e o MCP Tool Router resolve a integração.
+
+=====================================================================
+CAPÍTULO 9 – MCP SERVER DE SEGUROS
+=====================================================================
+
+Criar:
+
+mcp_servers/seguros_mcp_server
+
+Ferramentas:
+
+consultar_apolice
+consultar_sinistro
+consultar_pagamento
+
+O contrato deve seguir o mesmo padrão dos servidores:
+
+telecom_mcp_server
+retail_mcp_server
+
+já existentes no projeto.
+
+=====================================================================
+CAPÍTULO 10 – TOOLS.YAML
+=====================================================================
+
+Registrar:
+
+consultar_apolice
+
+consultar_sinistro
+
+consultar_pagamento
+
+Cada ferramenta aponta para um servidor MCP.
+
+O framework descobre as ferramentas automaticamente.
+
+=====================================================================
+CAPÍTULO 11 – BUSINESS CONTEXT
+=====================================================================
+
+O projeto utiliza:
+
+IdentityResolver
+BusinessContext
+
+identificados no main.py.
+
+Nunca utilizar:
+
+policy_id
+customer_id
+
+diretamente no agente.
+
+Sempre utilizar:
+
+customer_key
+contract_key
+
+e deixar o MCPParameterMapper resolver.
+
+=====================================================================
+CAPÍTULO 12 – WORKFLOW REAL
+=====================================================================
+
+Ientificado em:
+
+AgentWorkflow
+
+em:
+
+app/workflows/agent_graph.py
+
+Fluxo:
+
+Mensagem
+↓
+State
+↓
+Guardrails
+↓
+Router
+↓
+Agent
+↓
+MCP
+↓
+LLM
+↓
+Judges
+↓
+Persistência
+
+=====================================================================
+CAPÍTULO 13 – MEMÓRIA
+=====================================================================
+
+O projeto inicializa:
+
+create_memory()
+
+Portanto todos os agentes possuem memória automaticamente.
+
+O agente deve consumir:
+
+history
+summary
+
+já presentes no AgentState.
+
+=====================================================================
+CAPÍTULO 14 – CHECKPOINTS
+=====================================================================
+
+Ientificado em:
+
+create_checkpoint_repository()
+
+O workflow possui persistência de checkpoints.
+
+Não é necessário implementar checkpoints no agente.
+
+=====================================================================
+CAPÍTULO 15 – TELEMETRIA
+=====================================================================
+
+Ientificado em:
+
+Telemetry()
+
+OpenTelemetry
+
+Langfuse
+
+OCI Streaming
+
+A telemetria já está integrada ao framework.
+
+=====================================================================
+CAPÍTULO 16 – SSE
+=====================================================================
+
+Ientificado em:
+
+SSEHub
+
+Fluxo:
+
+workflow.started
+message.responded
+workflow.completed
+
+O frontend recebe eventos em tempo real.
+
+=====================================================================
+CAPÍTULO 17 – TESTE LOCAL
+=====================================================================
+
+Subir Backend
+
+uvicorn app.main:app
+
+Subir MCP
+
+telecom_mcp_server
+
+retail_mcp_server
+
+seguros_mcp_server
+
+Subir Frontend
+
+Executar perguntas:
+
+Minha apólice está ativa?
+
+Quero consultar meu sinistro.
+
+=====================================================================
+CAPÍTULO 18 – DEPLOY
+=====================================================================
+
+O projeto foi desenhado para:
+
+Docker Compose
+Kubernetes
+OKE
+
+A aplicação é stateless.
+
+Sessões ficam fora do processo.
+
+=====================================================================
+CAPÍTULO 19 – BOAS PRÁTICAS
+=====================================================================
+
+Criar agentes especializados.
+
+Utilizar MCP para integrações.
+
+Utilizar BusinessContext.
+
+Não alterar o núcleo do framework.
+
+Adicionar comportamento através de:
+
+YAML
+Agentes
+MCP Servers
+
+=====================================================================
+CAPÍTULO 20 – RESUMO FINAL
+=====================================================================
+
+O framework já entrega:
+
+Router
+Supervisor
+LangGraph
+MCP
+Memory
+Checkpoint
+Guardrails
+Judges
+Langfuse
+OpenTelemetry
+OCI Streaming
+
+Para criar um novo agente normalmente basta:
+
+1. Registrar em agents.yaml
+2. Criar intents
+3. Criar prompt
+4. Criar MCP Server
+5. Registrar ferramentas
+6. Testar
+
+Sem alterar o núcleo da plataforma.
