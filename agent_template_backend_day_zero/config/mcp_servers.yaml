@@ -1,0 +1,17 @@
+# ============================================================================
+# DAY ZERO
+# Este arquivo foi copiado do agent_template_backend original.
+# Ajuste os exemplos abaixo para o domínio do seu novo agente.
+# ============================================================================
+servers:
+  telecom:
+    transport: http
+    endpoint: http://localhost:8100/mcp
+    enabled: true
+    description: MCP Server de exemplo para domínio Telecom.
+
+  retail:
+    transport: http
+    endpoint: http://localhost:8200/mcp
+    enabled: true
+    description: MCP Server de exemplo para domínio Retail.

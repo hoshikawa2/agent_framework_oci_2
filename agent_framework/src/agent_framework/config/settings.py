@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     OTEL_SERVICE_NAME: str = 'ai-agent-template'
 
+    ENABLE_ANALYTICS: bool = False
+    ANALYTICS_PROVIDERS: str = 'oci_streaming'
+    GCP_PUBSUB_TOPIC_PATH: str | None = None
+    AGENT_PUBSUB_TOPIC: str | None = None
+    GCP_PROJECT_ID: str | None = None
+    GCP_PUBSUB_TOPIC: str | None = None
+    GCP_PUBSUB_TIMEOUT_SECONDS: float = 30.0
+    ANALYTICS_FAIL_SILENT: bool = True
+
     ENABLE_OCI_STREAMING: bool = False
     OCI_STREAM_ENDPOINT: str | None = None
     OCI_STREAM_OCID: str | None = None
@@ -84,6 +93,8 @@ class Settings(BaseSettings):
     ENABLE_OUTPUT_GUARDRAILS: bool = True
     ENABLE_JUDGES: bool = True
     ENABLE_SUPERVISOR: bool = True
+    ENABLE_OUTPUT_SUPERVISOR: bool = True
+    OUTPUT_SUPERVISOR_MAX_RETRIES: int = 3
     GUARDRAILS_CONFIG_PATH: str = './config/guardrails.yaml'
     JUDGES_CONFIG_PATH: str = './config/judges.yaml'
     PROMPT_POLICY_PATH: str = './config/prompt_policy.yaml'

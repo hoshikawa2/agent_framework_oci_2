@@ -438,7 +438,7 @@ class OracleStore:
     def _graph_neighbors(self, node):
         with self.connect() as conn:
             cur=conn.cursor()
-            cur.execute(f"select SRC,REL,DST,METADATA_JSON from {self.t('GRAPH_EDGE')} where SRC=:1 or DST=:1", [node])
+            cur.execute(f"select SRC,REL,DST,METADATA_JSON from {self.t('GRAPH_EDGE')} where SRC=:1 or DST=:2", [node, node])
             out=[]
             for src,rel,dst,meta in cur.fetchall():
                 out.append((src,rel,dst,_json_loads(meta.read() if hasattr(meta,"read") else meta, {})))

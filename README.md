@@ -54,23 +54,26 @@ Obs: configure o arquivo .env.
 Terminal 1:
 
 ```bash
-bash ./scripts/run_mcp_servers.sh
-```
-
-Terminal 2:
-
-```bash
-cd agent_template_backend
+cd agent_framework_oci
 python -m venv .venv
 source .venv/bin/activate
+cd agent_template_backend
 pip install -e ../agent_framework
 pip install -r requirements.txt
 uvicorn app.main:app --reload --reload-dir app --reload-dir config --port 8000
 ```
 
+Terminal 2:
+
+```bash
+cd agent_framework_oci
+bash ./scripts/run_mcp_servers.sh
+```
+
 Terminal 3:
 
 ```bash
+cd agent_framework_oci
 cd agent_frontend
 python -m http.server 5173
 ```
