@@ -22,3 +22,8 @@ from .noc_contract import (
     noc_005_fatal_exception,
     noc_006_flow_latency,
 )
+
+try:
+    from .ic_events import *  # noqa: F401,F403
+except Exception:  # pragma: no cover
+    pass

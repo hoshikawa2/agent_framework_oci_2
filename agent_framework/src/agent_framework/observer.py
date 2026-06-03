@@ -155,3 +155,75 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
         task.result()
     except Exception:
         logger.exception("agent_framework.observer.event task failed")
+
+async def aic(
+    code: str,
+    *,
+    data: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Emite Item de Controle (IC) de forma assíncrona.
+
+    Uso:
+        await aic("AGENT_COMPLETED", data={...})
+    Publica como IC.AGENT_COMPLETED.
+    """
+    normalized = code if str(code).startswith("IC.") else f"IC.{code}"
+    return await aevent(normalized, data=data, metadata=metadata)
+
+
+def ic(
+    code: str,
+    *,
+    data: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Emite Item de Controle (IC) de forma síncrona/fire-and-forget."""
+    normalized = code if str(code).startswith("IC.") else f"IC.{code}"
+    return event(normalized, data=data, metadata=metadata)
+
+
+async def anoc(
+    code: str,
+    *,
+    data: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Emite evento NOC com metadata noc:true."""
+    normalized = code if str(code).startswith("NOC.") else f"NOC.{code}"
+    meta = {**dict(metadata or {}), "noc": True}
+    return await aevent(normalized, data=data, metadata=meta)
+
+
+def noc(
+    code: str,
+    *,
+    data: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Emite evento NOC de forma síncrona/fire-and-forget."""
+    normalized = code if str(code).startswith("NOC.") else f"NOC.{code}"
+    meta = {**dict(metadata or {}), "noc": True}
+    return event(normalized, data=data, metadata=meta)
+
+
+async def agrl(
+    code: str,
+    *,
+    data: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Emite evento GRL de forma assíncrona."""
+    normalized = code if str(code).startswith("GRL.") else f"GRL.{code}"
+    return await aevent(normalized, data=data, metadata=metadata)
+
+
+def grl(
+    code: str,
+    *,
+    data: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Emite evento GRL de forma síncrona/fire-and-forget."""
+    normalized = code if str(code).startswith("GRL.") else f"GRL.{code}"
+    return event(normalized, data=data, metadata=metadata)

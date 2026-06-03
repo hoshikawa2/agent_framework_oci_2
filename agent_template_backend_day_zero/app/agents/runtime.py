@@ -59,13 +59,40 @@ class AgentRuntimeMixin:
             "conversation_key": state.get("conversation_key") or state.get("session_id"),
         }
         for tool in tools:
+            observer = getattr(self, "observer", None)
+            if observer:
+                await observer.emit_ic(
+                    "MCP_TOOL_CALLED",
+                    {
+                        "session_id": original_context.get("conversation_key") or original_context.get("session_id"),
+                        "tenant_id": original_context.get("tenant_id"),
+                        "agent_id": original_context.get("agent_id"),
+                        "tool_name": tool,
+                    },
+                    component="agent_runtime",
+                )
             res = await self.tool_router.call(
                 tool,
                 {},
                 business_context=business_context,
                 original_context=original_context,
             )
-            results.append(res.model_dump(mode="json"))
+            result_payload = res.model_dump(mode="json")
+            if observer:
+                await observer.emit_ic(
+                    "TOOL_CALLED",
+                    {
+                        "session_id": original_context.get("conversation_key") or original_context.get("session_id"),
+                        "tenant_id": original_context.get("tenant_id"),
+                        "agent_id": original_context.get("agent_id"),
+                        "tool_name": tool,
+                        "ok": result_payload.get("ok"),
+                        "server_name": result_payload.get("server_name"),
+                        "error": result_payload.get("error"),
+                    },
+                    component="agent_runtime",
+                )
+            results.append(result_payload)
         return results
 
     async def _cache_get(self, key: str):

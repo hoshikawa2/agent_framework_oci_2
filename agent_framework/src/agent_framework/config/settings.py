@@ -91,6 +91,8 @@ class Settings(BaseSettings):
 
     ENABLE_INPUT_GUARDRAILS: bool = True
     ENABLE_OUTPUT_GUARDRAILS: bool = True
+    ENABLE_PARALLEL_GUARDRAILS: bool = True
+    GUARDRAILS_FAIL_FAST: bool = True
     ENABLE_JUDGES: bool = True
     ENABLE_SUPERVISOR: bool = True
     ENABLE_OUTPUT_SUPERVISOR: bool = True

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Iterable
 
@@ -8,6 +7,7 @@ from .base import RailDecision as LegacyRailDecision
 from .rail_action import RailAction
 from .rail_decision import RailDecisionV2
 from .rail_result import RailResult
+from .parallel_executor import ParallelRailExecutor
 
 logger = logging.getLogger("agent_framework.guardrails.output_supervisor")
 
@@ -38,12 +38,17 @@ class OutputSupervisor:
         max_retries: int = 3,
         observer: Any | None = None,
         fail_closed_action: RailAction = RailAction.BLOCK,
+        enable_parallel: bool = True,
+        fail_fast: bool = True,
     ):
         self.rails = list(rails or [])
         self.fallback_message = fallback_message or "Não consegui validar essa resposta com segurança. Posso reformular a resposta."
         self.max_retries = max_retries
         self.observer = observer
         self.fail_closed_action = fail_closed_action
+        self.enable_parallel = enable_parallel
+        self.fail_fast = fail_fast
+        self.executor = ParallelRailExecutor(fail_fast=fail_fast, observer=observer, stage="output")
 
     async def evaluate(self, candidate: str, context: dict[str, Any] | None = None) -> RailDecisionV2:
         ctx = dict(context or {})
@@ -55,21 +60,36 @@ class OutputSupervisor:
             await self._emit_final(decision, ctx)
             return decision
 
-        async def _run_rail(rail: Any) -> RailResult:
-            code = getattr(rail, "code", rail.__class__.__name__)
-            try:
-                raw = await rail.evaluate(candidate, ctx)
-                return self._normalize_result(raw, candidate=candidate)
-            except Exception as exc:
-                logger.exception("output_supervisor.rail_failed code=%s", code)
-                return RailResult(
-                    code=str(code),
-                    action=self.fail_closed_action,
-                    reason=f"Rail falhou em modo fail-closed: {exc}",
-                    metadata={"exception_type": exc.__class__.__name__},
+        if self.enable_parallel:
+            execution = await self.executor.run(candidate, ctx, self.rails, fail_fast=self.fail_fast, stage="output_supervisor")
+            results = list(execution.results)
+            if execution.cancelled_codes:
+                results.append(
+                    RailResult(
+                        code="PARALLEL_CANCELLED",
+                        action=RailAction.OBSERVE,
+                        reason="Rails pendentes cancelados por fail-fast.",
+                        metadata={"cancelled_codes": execution.cancelled_codes},
+                    )
                 )
+        else:
+            results = []
+            for rail in self.rails:
+                code = getattr(rail, "code", rail.__class__.__name__)
+                try:
+                    raw = await rail.evaluate(candidate, ctx)
+                    results.append(self._normalize_result(raw, candidate=candidate))
+                except Exception as exc:
+                    logger.exception("output_supervisor.rail_failed code=%s", code)
+                    results.append(
+                        RailResult(
+                            code=str(code),
+                            action=self.fail_closed_action,
+                            reason=f"Rail falhou em modo fail-closed: {exc}",
+                            metadata={"exception_type": exc.__class__.__name__},
+                        )
+                    )
 
-        results = await asyncio.gather(*[_run_rail(rail) for rail in self.rails])
         decision = self.aggregate(candidate, list(results), ctx)
         await self._emit_events(results, decision, ctx)
         await self._emit_final(decision, ctx)

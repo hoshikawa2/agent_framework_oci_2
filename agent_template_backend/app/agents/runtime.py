@@ -13,6 +13,75 @@ class AgentRuntimeMixin:
     o MCPParameterMapper converte para cada tool configurada.
     """
 
+
+    async def _emit_ic(self, code: str, state: dict[str, Any], payload: dict[str, Any] | None = None, component: str | None = None) -> None:
+        """Emite Item de Controle (IC) sem impactar a execução do agente.
+
+        Este helper é intencionalmente fail-open: erro de observabilidade não
+        pode quebrar a jornada de negócio do agente. O desenvolvedor pode usar
+        o mesmo padrão para ICs específicos da sua squad.
+        """
+        observer = getattr(self, "observer", None)
+        if not observer:
+            return
+        ctx = state.get("context") or {}
+        base = {
+            "session_id": state.get("conversation_key") or state.get("session_id"),
+            "tenant_id": state.get("tenant_id"),
+            "agent_id": state.get("agent_id"),
+            "route": state.get("route"),
+            "intent": state.get("intent"),
+            "message_id": ctx.get("message_id"),
+            "channel_id": ctx.get("channel"),
+        }
+        base.update(payload or {})
+        try:
+            await observer.emit_ic(code, base, component=component or f"agent.{getattr(self, 'name', 'unknown')}")
+        except Exception:
+            return
+
+    async def _emit_noc(self, code: str, state: dict[str, Any], payload: dict[str, Any] | None = None, component: str | None = None) -> None:
+        """Emite evento NOC sem acoplar a lógica de negócio à observabilidade."""
+        observer = getattr(self, "observer", None)
+        if not observer:
+            return
+        ctx = state.get("context") or {}
+        base = {
+            "session_id": state.get("conversation_key") or state.get("session_id"),
+            "tenant_id": state.get("tenant_id"),
+            "agent_id": state.get("agent_id"),
+            "route": state.get("route"),
+            "intent": state.get("intent"),
+            "message_id": ctx.get("message_id"),
+            "channel_id": ctx.get("channel"),
+        }
+        base.update(payload or {})
+        try:
+            await observer.emit_noc(code, base, component=component or f"agent.{getattr(self, 'name', 'unknown')}")
+        except Exception:
+            return
+
+    async def _emit_grl(self, code: str, state: dict[str, Any], payload: dict[str, Any] | None = None, component: str | None = None) -> None:
+        """Emite evento GRL opcional para custom rails implementados no backend."""
+        observer = getattr(self, "observer", None)
+        if not observer:
+            return
+        ctx = state.get("context") or {}
+        base = {
+            "session_id": state.get("conversation_key") or state.get("session_id"),
+            "tenant_id": state.get("tenant_id"),
+            "agent_id": state.get("agent_id"),
+            "route": state.get("route"),
+            "intent": state.get("intent"),
+            "message_id": ctx.get("message_id"),
+            "channel_id": ctx.get("channel"),
+        }
+        base.update(payload or {})
+        try:
+            await observer.emit_grl(code, base, component=component or f"agent.{getattr(self, 'name', 'unknown')}")
+        except Exception:
+            return
+
     async def _retrieve_rag_context(self, state: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         rag_service = getattr(self, "rag_service", None)
         if not rag_service:
@@ -59,13 +128,40 @@ class AgentRuntimeMixin:
             "conversation_key": state.get("conversation_key") or state.get("session_id"),
         }
         for tool in tools:
+            observer = getattr(self, "observer", None)
+            if observer:
+                await observer.emit_ic(
+                    "IC.MCP_TOOL_CALLED",
+                    {
+                        "session_id": original_context.get("conversation_key") or original_context.get("session_id"),
+                        "tenant_id": original_context.get("tenant_id"),
+                        "agent_id": original_context.get("agent_id"),
+                        "tool_name": tool,
+                    },
+                    component="agent_runtime",
+                )
             res = await self.tool_router.call(
                 tool,
                 {},
                 business_context=business_context,
                 original_context=original_context,
             )
-            results.append(res.model_dump(mode="json"))
+            result_payload = res.model_dump(mode="json")
+            if observer:
+                await observer.emit_ic(
+                    "IC.TOOL_CALLED",
+                    {
+                        "session_id": original_context.get("conversation_key") or original_context.get("session_id"),
+                        "tenant_id": original_context.get("tenant_id"),
+                        "agent_id": original_context.get("agent_id"),
+                        "tool_name": tool,
+                        "ok": result_payload.get("ok"),
+                        "server_name": result_payload.get("server_name"),
+                        "error": result_payload.get("error"),
+                    },
+                    component="agent_runtime",
+                )
+            results.append(result_payload)
         return results
 
     async def _cache_get(self, key: str):

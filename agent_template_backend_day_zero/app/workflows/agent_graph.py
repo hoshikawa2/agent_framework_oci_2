@@ -92,11 +92,17 @@ class AgentWorkflow:
         self.observer = observer or AgentObserver(analytics=analytics)
         self.settings = settings
         self.tool_router = tool_router
-        self.guardrails = GuardrailPipeline()
+        self.guardrails = GuardrailPipeline(
+            observer=self.observer,
+            enable_parallel=bool(getattr(settings, "ENABLE_PARALLEL_GUARDRAILS", True)),
+            fail_fast=bool(getattr(settings, "GUARDRAILS_FAIL_FAST", True)),
+        )
         self.output_supervisor_engine = OutputSupervisor(
             rails=[LegacyOutputGuardrailRail(self.guardrails)],
             observer=self.observer,
             max_retries=int(getattr(settings, "OUTPUT_SUPERVISOR_MAX_RETRIES", 3)),
+            enable_parallel=bool(getattr(settings, "ENABLE_PARALLEL_GUARDRAILS", True)),
+            fail_fast=bool(getattr(settings, "GUARDRAILS_FAIL_FAST", True)),
         )
         self.judges = JudgePipeline()
         self.supervisor = Supervisor()
@@ -107,7 +113,7 @@ class AgentWorkflow:
         self.cache = create_cache(settings)
         self.rag_service = RagService(settings, telemetry=telemetry)
         self.router = EnterpriseRouter(settings, llm=llm, telemetry=telemetry)
-        agent_kwargs = {"telemetry": telemetry, "tool_router": getattr(self, "tool_router", None), "rag_service": self.rag_service, "cache": self.cache, "settings": settings}
+        agent_kwargs = {"telemetry": telemetry, "tool_router": getattr(self, "tool_router", None), "rag_service": self.rag_service, "cache": self.cache, "settings": settings, "observer": self.observer}
         self.billing = BillingAgent(llm, **agent_kwargs)
         self.product = ProductAgent(llm, **agent_kwargs)
         self.orders = OrdersAgent(llm, **agent_kwargs)
@@ -253,6 +259,19 @@ class AgentWorkflow:
 
             decision = await self.router.route(state)
             await self.langgraph_telemetry.edge("routing_decision", decision.route, state, {"method": getattr(decision, "method", None), "intent": decision.intent, "confidence": decision.confidence})
+            await self.observer.emit_ic(
+                "ROUTE_SELECTED",
+                {
+                    "session_id": state.get("conversation_key") or state.get("session_id"),
+                    "tenant_id": state.get("tenant_id"),
+                    "agent_id": state.get("agent_id"),
+                    "route": decision.route,
+                    "intent": decision.intent,
+                    "confidence": decision.confidence,
+                    "method": getattr(decision, "method", None),
+                },
+                component="workflow.routing_decision",
+            )
             return {
                 "route": decision.route,
                 "intent": decision.intent,
@@ -561,6 +580,18 @@ class AgentWorkflow:
                     "channel_id": (state.get("context") or {}).get("channel"),
                     "message_id": (state.get("context") or {}).get("message_id"),
                     "ura_call_id": (state.get("context") or {}).get("ura_call_id"),
+                },
+                component="workflow.ainvoke",
+            )
+            await self.observer.emit_ic(
+                "AGENT_STARTED",
+                {
+                    "session_id": state.get("conversation_key") or state.get("session_id"),
+                    "tenant_id": state.get("tenant_id"),
+                    "agent_id": state.get("agent_id"),
+                    "channel_id": (state.get("context") or {}).get("channel"),
+                    "message_id": (state.get("context") or {}).get("message_id"),
+                    "user_text_chars": len(state.get("user_text") or ""),
                 },
                 component="workflow.ainvoke",
             )

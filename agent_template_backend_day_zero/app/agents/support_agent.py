@@ -24,13 +24,14 @@ class SupportAgent(AgentRuntimeMixin):
 
     name = "support_agent"
 
-    def __init__(self, llm, telemetry=None, tool_router=None, rag_service=None, cache=None, settings=None):
+    def __init__(self, llm, telemetry=None, tool_router=None, rag_service=None, cache=None, settings=None, observer=None):
         self.llm = llm
         self.telemetry = telemetry
         self.tool_router = tool_router
         self.rag_service = rag_service
         self.cache = cache
         self.settings = settings
+        self.observer = observer
 
     async def run(self, state):
         """Implemente aqui a regra de negócio do seu agente.
@@ -92,13 +93,14 @@ class SupportAgent(AgentRuntimeMixin):
 # class SupportAgent(AgentRuntimeMixin):
 #     name = "support_agent"
 #
-#     def __init__(self, llm, telemetry=None, tool_router=None, rag_service=None, cache=None, settings=None):
+#     def __init__(self, llm, telemetry=None, tool_router=None, rag_service=None, cache=None, settings=None, observer=None):
 #         self.llm = llm
 #         self.telemetry = telemetry
 #         self.tool_router = tool_router
 #         self.rag_service = rag_service
 #         self.cache = cache
 #         self.settings = settings
+        self.observer = observer
 #
 #     async def run(self, state):
 #         tool_context = await self._collect_tool_context(state)

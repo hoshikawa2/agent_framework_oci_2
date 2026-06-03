@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from .base import RailDecision
+from .parallel_executor import ParallelRailExecutor, TERMINAL_ACTIONS
+from .rail_action import RailAction
 from .rails import (
     ComplianceRail,
     GroundednessRail,
@@ -21,17 +24,39 @@ from .rails import (
 )
 
 
-class GuardrailPipeline:
-    """Pipeline default de rails.
+def _truthy(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "y"}
 
-    Os rails de input/output são executados em sequência. Rails com
-    sanitized_text alteram o texto corrente; rails não bloqueantes retornam
-    allowed=True com metadata para auditoria. Os rails de retrieval/tool ficam
-    disponíveis por métodos dedicados, sem quebrar compatibilidade com o fluxo
-    LangGraph atual.
+
+class GuardrailPipeline:
+    """Pipeline default de rails com suporte a execução paralela fail-fast.
+
+    Por padrão o pipeline agora executa rails de input/output em paralelo.
+    O primeiro rail que retornar ação terminal (block/retry/handover) encerra a
+    rodada e cancela os demais. Sanitizações são aplicadas em ordem estável.
+
+    Para compatibilidade, o retorno público continua sendo:
+        (texto_final, list[RailDecision legado])
+
+    A otimização pode ser desligada por configuração/env:
+        ENABLE_PARALLEL_GUARDRAILS=false
     """
 
-    def __init__(self, input_rails=None, output_rails=None, retrieval_rails=None, tool_rails=None):
+    def __init__(
+        self,
+        input_rails=None,
+        output_rails=None,
+        retrieval_rails=None,
+        tool_rails=None,
+        *,
+        observer: Any | None = None,
+        enable_parallel: bool | None = None,
+        fail_fast: bool | None = None,
+    ):
         self.input_rails = input_rails or [
             MessageSizeRail(),
             PiiMaskRail(),
@@ -49,8 +74,12 @@ class GuardrailPipeline:
         ]
         self.retrieval_rails = retrieval_rails or [RetrievalRelevanceRail(), PiiMaskRail()]
         self.tool_rails = tool_rails or [ToolValidationRail()]
+        self.observer = observer
+        self.enable_parallel = _truthy(os.getenv("ENABLE_PARALLEL_GUARDRAILS"), True) if enable_parallel is None else enable_parallel
+        self.fail_fast = _truthy(os.getenv("GUARDRAILS_FAIL_FAST"), True) if fail_fast is None else fail_fast
+        self.executor = ParallelRailExecutor(fail_fast=self.fail_fast, observer=observer)
 
-    async def _run(self, text: str, context: dict[str, Any], rails: list) -> tuple[str, list[RailDecision]]:
+    async def _run_sequential(self, text: str, context: dict[str, Any], rails: list) -> tuple[str, list[RailDecision]]:
         current = text
         decisions: list[RailDecision] = []
         for rail in rails:
@@ -62,11 +91,51 @@ class GuardrailPipeline:
                 return current, decisions
         return current, decisions
 
+    async def _run_parallel(self, text: str, context: dict[str, Any], rails: list, *, stage: str) -> tuple[str, list[RailDecision]]:
+        execution = await self.executor.run(text, context, rails, fail_fast=self.fail_fast, stage=stage)
+        decisions: list[RailDecision] = []
+
+        for result in execution.results:
+            legacy_model = result.metadata.get("legacy_decision_model") if isinstance(result.metadata, dict) else None
+            if isinstance(legacy_model, dict):
+                decisions.append(RailDecision(**legacy_model))
+            else:
+                allowed = result.action not in TERMINAL_ACTIONS
+                decisions.append(
+                    RailDecision(
+                        code=result.code,
+                        allowed=allowed,
+                        reason=result.reason,
+                        sanitized_text=result.sanitized_text,
+                        metadata={
+                            **dict(result.metadata or {}),
+                            "action": result.action.value,
+                            "guidance": result.guidance,
+                            "parallel_executor": True,
+                        },
+                    )
+                )
+
+        if execution.cancelled_codes:
+            decisions.append(
+                RailDecision(
+                    code="PARALLEL_CANCELLED",
+                    allowed=True,
+                    metadata={"cancelled_codes": execution.cancelled_codes, "stage": stage},
+                )
+            )
+        return execution.text, decisions
+
+    async def _run(self, text: str, context: dict[str, Any], rails: list, *, stage: str = "guardrail") -> tuple[str, list[RailDecision]]:
+        if not self.enable_parallel:
+            return await self._run_sequential(text, context, rails)
+        return await self._run_parallel(text, context, rails, stage=stage)
+
     async def run_input(self, text, context):
-        return await self._run(text, context or {}, self.input_rails)
+        return await self._run(text, context or {}, self.input_rails, stage="input")
 
     async def run_output(self, text, context):
-        current, decisions = await self._run(text, context or {}, self.output_rails)
+        current, decisions = await self._run(text, context or {}, self.output_rails, stage="output")
         if any((not decision.allowed and decision.code == "REVPREC") for decision in decisions):
             return (
                 "Não posso confirmar essa ação sem validação operacional. Posso explicar o próximo passo.",
@@ -75,10 +144,10 @@ class GuardrailPipeline:
         return current, decisions
 
     async def run_retrieval(self, chunk_text: str, context: dict[str, Any] | None = None):
-        return await self._run(chunk_text, context or {}, self.retrieval_rails)
+        return await self._run(chunk_text, context or {}, self.retrieval_rails, stage="retrieval")
 
     async def run_tool(self, tool_name: str, tool_args: dict[str, Any], context: dict[str, Any] | None = None):
         ctx = dict(context or {})
         ctx.setdefault("tool_name", tool_name)
         ctx.setdefault("tool_args", tool_args or {})
-        return await self._run(tool_name, ctx, self.tool_rails)
+        return await self._run(tool_name, ctx, self.tool_rails, stage="tool")
