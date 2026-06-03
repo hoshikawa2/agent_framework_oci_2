@@ -1,4 +1,18 @@
 services:
+
+  agent-gateway:
+    build:
+      context: .
+      dockerfile: agent_gateway/Dockerfile
+    env_file: agent_gateway/.env.example
+    environment:
+      BACKENDS_CONFIG_PATH: /app/config/backends.yaml
+      # Ajuste estas URLs quando subir múltiplos backends reais.
+      # Em Docker, localhost dentro do container aponta para o próprio gateway.
+      # Use nomes de serviço Docker/OKE, ex.: http://backend-contas:8000
+    ports:
+      - "8010:8010"
+
   telecom-mcp:
     build:
       context: ./mcp_servers/telecom_mcp_server

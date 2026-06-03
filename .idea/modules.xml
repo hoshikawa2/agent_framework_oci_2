@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/agent_ai_platform_mcp_tools_complete.iml" filepath="$PROJECT_DIR$/.idea/agent_ai_platform_mcp_tools_complete.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/agent_framework_oci.iml" filepath="$PROJECT_DIR$/.idea/agent_framework_oci.iml" />
     </modules>
   </component>
 </project>
