@@ -26,6 +26,8 @@ Guardrails → LLM OCI Generative AI → Output Guardrails → Judges
 Memory / RAG / Vector / Graph / Telemetry / Streaming
 ```
 
+![img_1.png](img_1.png)
+
 ## Quickstart local
 
 Suba a estrutura de Langfuse, MongoDB, REDIS para seu ambiente de desenvolvimento:
