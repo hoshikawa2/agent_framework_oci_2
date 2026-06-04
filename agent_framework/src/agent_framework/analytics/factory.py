@@ -27,15 +27,31 @@ def create_analytics_publisher(settings: Any | None = None) -> AnalyticsPublishe
         from agent_framework.config.settings import settings as default_settings
         settings = default_settings
 
-    if not bool(getattr(settings, "ENABLE_ANALYTICS", False)):
+    analytics_enabled = bool(getattr(settings, "ENABLE_ANALYTICS", False))
+    langfuse_enabled = bool(getattr(settings, "ENABLE_LANGFUSE", False))
+
+    # Historicamente o observer era usado para enviar IC/NOC/GRL ao Langfuse
+    # mesmo quando o pipeline de analytics/streaming não estava habilitado.
+    # Portanto, ENABLE_LANGFUSE=true também ativa o publisher Langfuse do observer.
+    if not analytics_enabled and not langfuse_enabled:
         return NoopAnalyticsPublisher()
 
     providers = _split_csv(getattr(settings, "ANALYTICS_PROVIDERS", "")) or ["oci_streaming"]
+    if langfuse_enabled and "langfuse" not in providers:
+        providers.insert(0, "langfuse")
+
+    # Se analytics geral estiver desligado, publica somente no Langfuse para
+    # evitar inicializar OCI Streaming/PubSub por engano em ambientes locais.
+    if not analytics_enabled:
+        providers = [p for p in providers if p in {"langfuse", "noop", "none"}] or ["langfuse"]
     publishers: list[AnalyticsPublisher] = []
 
     for provider in providers:
         try:
-            if provider == "oci_streaming":
+            if provider == "langfuse":
+                from .providers.langfuse import LangfuseAnalyticsPublisher
+                publishers.append(LangfuseAnalyticsPublisher(settings=settings))
+            elif provider == "oci_streaming":
                 from .providers.oci_streaming import OCIStreamingAnalyticsPublisher
                 publishers.append(OCIStreamingAnalyticsPublisher(settings=settings))
             elif provider in {"pubsub", "gcp_pubsub", "gcp"}:

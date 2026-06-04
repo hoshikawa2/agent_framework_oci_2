@@ -37,6 +37,54 @@ def _truthy(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "y"}
 
 
+def _is_prefixed_control_code(code: str) -> bool:
+    return str(code).startswith(("IC.", "AGA.", "NOC.", "GRL."))
+
+
+def _normalize_ic_code(code: str) -> str:
+    """Normaliza IC sem quebrar contratos TIM/FIRST já existentes.
+
+    - AGA.xxx é um IC de domínio/backoffice e deve permanecer AGA.xxx.
+    - IC.xxx permanece IC.xxx.
+    - NOC.xxx/GRL.xxx não são recodificados caso algum legado chame ic().
+    - nomes genéricos viram IC.<nome>.
+    """
+    code = str(code).strip()
+    return code if _is_prefixed_control_code(code) else f"IC.{code}"
+
+
+def _normalize_noc_code(code: str) -> str:
+    code = str(code).strip()
+    return code if code.startswith("NOC.") else f"NOC.{code}"
+
+
+def _normalize_grl_code(code: str) -> str:
+    code = str(code).strip()
+    return code if code.startswith("GRL.") else f"GRL.{code}"
+
+
+def _with_control_defaults(event_type: str, data: dict[str, Any] | None, metadata: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = dict(data or {})
+    meta = dict(metadata or {})
+    payload.setdefault("tag", event_type)
+    # Mantém flags consultáveis pelos exporters sem obrigar cada agente a repetir.
+    if event_type.startswith(("IC.", "AGA.")):
+        meta.setdefault("ic", True)
+    if event_type.startswith("NOC."):
+        meta.setdefault("noc", True)
+    if event_type.startswith("GRL."):
+        meta.setdefault("grl", True)
+    return payload, meta
+
+
+def _append_provider(current: str | None, provider: str) -> str:
+    items = [item.strip() for item in (current or "").split(",") if item.strip()]
+    low = {item.lower() for item in items}
+    if provider.lower() not in low:
+        items.insert(0, provider)
+    return ",".join(items)
+
+
 def _apply_config_to_env(config: dict[str, Any]) -> None:
     """Traduz nomes de configuração FIRST/TIM para envs do framework.
 
@@ -64,7 +112,11 @@ def _apply_config_to_env(config: dict[str, Any]) -> None:
     if topic and not os.getenv("GCP_PUBSUB_TOPIC_PATH"):
         os.environ["GCP_PUBSUB_TOPIC_PATH"] = str(topic)
 
+    publisher_type = str(publisher_cfg.get("type") or config.get("publisher_type") or "").strip().lower()
     providers = config.get("providers") or config.get("analytics_providers")
+    if not providers and publisher_type in {"langfuse", "oci_streaming", "pubsub", "gcp_pubsub", "kafka"}:
+        providers = publisher_type
+
     if providers and not os.getenv("ANALYTICS_PROVIDERS"):
         if isinstance(providers, (list, tuple, set)):
             os.environ["ANALYTICS_PROVIDERS"] = ",".join(str(p) for p in providers)
@@ -74,6 +126,14 @@ def _apply_config_to_env(config: dict[str, Any]) -> None:
     # Se foi informado um tópico Pub/Sub e não há providers explícitos, habilita Pub/Sub.
     if topic and not os.getenv("ANALYTICS_PROVIDERS"):
         os.environ["ANALYTICS_PROVIDERS"] = "pubsub"
+
+    # Compatibilidade com o setup antigo do backoffice, que chamava
+    # configure({"publisher": {"type": "langfuse"}}) esperando que IC/NOC
+    # aparecessem no Langfuse.
+    if publisher_type == "langfuse":
+        os.environ.setdefault("ENABLE_LANGFUSE", "true")
+        os.environ.setdefault("ENABLE_ANALYTICS", "true")
+        os.environ["ANALYTICS_PROVIDERS"] = _append_provider(os.getenv("ANALYTICS_PROVIDERS"), "langfuse")
 
     enabled = config.get("enabled")
     if enabled is None:
@@ -115,8 +175,7 @@ async def aevent(
     event_test: bool | None = None,
 ) -> dict[str, Any] | None:
     """Versão async da emissão compatível com FIRST/TIM."""
-    payload = dict(data or {})
-    meta = dict(metadata or {})
+    payload, meta = _with_control_defaults(name, data, metadata)
 
     # O bridge legado muitas vezes manda todo o payload em metadata.
     # Mantemos ambos: payload vazio continua válido e metadata preserva noc:true.
@@ -168,7 +227,7 @@ async def aic(
         await aic("AGENT_COMPLETED", data={...})
     Publica como IC.AGENT_COMPLETED.
     """
-    normalized = code if str(code).startswith("IC.") else f"IC.{code}"
+    normalized = _normalize_ic_code(code)
     return await aevent(normalized, data=data, metadata=metadata)
 
 
@@ -179,7 +238,7 @@ def ic(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Emite Item de Controle (IC) de forma síncrona/fire-and-forget."""
-    normalized = code if str(code).startswith("IC.") else f"IC.{code}"
+    normalized = _normalize_ic_code(code)
     return event(normalized, data=data, metadata=metadata)
 
 
@@ -190,7 +249,7 @@ async def anoc(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Emite evento NOC com metadata noc:true."""
-    normalized = code if str(code).startswith("NOC.") else f"NOC.{code}"
+    normalized = _normalize_noc_code(code)
     meta = {**dict(metadata or {}), "noc": True}
     return await aevent(normalized, data=data, metadata=meta)
 
@@ -202,7 +261,7 @@ def noc(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Emite evento NOC de forma síncrona/fire-and-forget."""
-    normalized = code if str(code).startswith("NOC.") else f"NOC.{code}"
+    normalized = _normalize_noc_code(code)
     meta = {**dict(metadata or {}), "noc": True}
     return event(normalized, data=data, metadata=meta)
 
@@ -214,8 +273,9 @@ async def agrl(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Emite evento GRL de forma assíncrona."""
-    normalized = code if str(code).startswith("GRL.") else f"GRL.{code}"
-    return await aevent(normalized, data=data, metadata=metadata)
+    normalized = _normalize_grl_code(code)
+    meta = {**dict(metadata or {}), "grl": True}
+    return await aevent(normalized, data=data, metadata=meta)
 
 
 def grl(
@@ -225,5 +285,6 @@ def grl(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Emite evento GRL de forma síncrona/fire-and-forget."""
-    normalized = code if str(code).startswith("GRL.") else f"GRL.{code}"
-    return event(normalized, data=data, metadata=metadata)
+    normalized = _normalize_grl_code(code)
+    meta = {**dict(metadata or {}), "grl": True}
+    return event(normalized, data=data, metadata=meta)

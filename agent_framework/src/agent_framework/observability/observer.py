@@ -8,6 +8,34 @@ from agent_framework.analytics import AnalyticsPublisher, build_analytics_event,
 logger = logging.getLogger("agent_framework.observability.observer")
 
 
+def _normalize_ic_code(code: str) -> str:
+    code = str(code).strip()
+    return code if code.startswith(("IC.", "AGA.", "NOC.", "GRL.")) else f"IC.{code}"
+
+
+def _normalize_noc_code(code: str) -> str:
+    code = str(code).strip()
+    return code if code.startswith("NOC.") else f"NOC.{code}"
+
+
+def _normalize_grl_code(code: str) -> str:
+    code = str(code).strip()
+    return code if code.startswith("GRL.") else f"GRL.{code}"
+
+
+def _apply_control_defaults(event_type: str, payload: dict[str, Any] | None, metadata: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    body = dict(payload or {})
+    meta = dict(metadata or {})
+    body.setdefault("tag", event_type)
+    if event_type.startswith(("IC.", "AGA.")):
+        meta.setdefault("ic", True)
+    if event_type.startswith("NOC."):
+        meta.setdefault("noc", True)
+    if event_type.startswith("GRL."):
+        meta.setdefault("grl", True)
+    return body, meta
+
+
 class AgentObserver:
     """Observer corporativo para eventos IC, NOC e GRL.
 
@@ -36,7 +64,8 @@ class AgentObserver:
         metadata: dict[str, Any] | None = None,
         source: str = "agent_framework",
     ) -> dict[str, Any]:
-        event = build_analytics_event(event_type, payload or {}, source=source, metadata=metadata)
+        payload, metadata = _apply_control_defaults(event_type, payload, metadata)
+        event = build_analytics_event(event_type, payload, source=source, metadata=metadata)
 
         if self.emit_analytics:
             await self.analytics.publish(event_type, event)
@@ -50,12 +79,13 @@ class AgentObserver:
         return event
 
     async def emit_ic(self, code: str, payload: dict[str, Any] | None = None, **metadata: Any) -> dict[str, Any]:
-        return await self.emit(f"IC.{code}", payload, metadata=metadata)
+        meta = {**dict(metadata), "ic": True}
+        return await self.emit(_normalize_ic_code(code), payload, metadata=meta)
 
     async def emit_noc(self, code: str, payload: dict[str, Any] | None = None, **metadata: Any) -> dict[str, Any]:
-        meta = dict(metadata)
-        meta["noc"] = True
-        return await self.emit(f"NOC.{code}", payload, metadata=meta)
+        meta = {**dict(metadata), "noc": True}
+        return await self.emit(_normalize_noc_code(code), payload, metadata=meta)
 
     async def emit_grl(self, code: str, payload: dict[str, Any] | None = None, **metadata: Any) -> dict[str, Any]:
-        return await self.emit(f"GRL.{code}", payload, metadata=metadata)
+        meta = {**dict(metadata), "grl": True}
+        return await self.emit(_normalize_grl_code(code), payload, metadata=meta)
