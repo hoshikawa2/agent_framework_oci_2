@@ -120,6 +120,19 @@ class LangGraphCheckpointRepository(ABC):
     async def compact(self, thread_id: str, keep_last: int = 20) -> int:
         return 0
 
+    @staticmethod
+    def is_valid_checkpoint(checkpoint):
+        if not isinstance(checkpoint, dict):
+            return False
+        if "v" in checkpoint:
+            return True
+        if (
+                "checkpoint" in checkpoint
+                and isinstance(checkpoint["checkpoint"], dict)
+                and "v" in checkpoint["checkpoint"]
+        ):
+            return True
+        return False
 
 class InMemoryCheckpointRepository(LangGraphCheckpointRepository):
     def __init__(self):
@@ -325,20 +338,55 @@ class ResilientCheckpointRepository(LangGraphCheckpointRepository):
         return await self.inner.compact(thread_id, keep_last=keep_last)
 
     async def recover_latest(self, thread_id: str) -> dict[str, Any] | None:
-        """Return the newest valid checkpoint, skipping corrupt latest records."""
-        raw_items = await self._with_retry("list_latest", lambda: self.inner.list_latest(thread_id, self.recovery_scan_limit))
+        """Return the newest valid LangGraph checkpoint, skipping corrupt or legacy records."""
+        raw_items = await self._with_retry(
+            "list_latest",
+            lambda: self.inner.list_latest(thread_id, self.recovery_scan_limit),
+        )
+
         first_integrity_error: Exception | None = None
+        invalid_count = 0
+
         for raw in raw_items:
             try:
-                return self.integrity.unwrap(raw) if self.enable_integrity else raw
+                payload = self.integrity.unwrap(raw)
+
+                candidate = payload
+
+                if (
+                        isinstance(payload, dict)
+                        and "checkpoint" in payload
+                ):
+                    candidate = payload["checkpoint"]
+
+                if not self.is_valid_checkpoint(candidate):
+                    continue
+
+                return payload
+
             except CheckpointIntegrityError as exc:
                 first_integrity_error = first_integrity_error or exc
-                logger.error("checkpoint.recovery.skip_corrupt thread_id=%s error=%s", thread_id, exc)
+                logger.error(
+                    "checkpoint.recovery.skip_corrupt thread_id=%s error=%s",
+                    thread_id,
+                    exc,
+                )
                 continue
-        if first_integrity_error:
-            raise CheckpointRecoveryError(f"Nenhum checkpoint válido encontrado para thread_id={thread_id}") from first_integrity_error
-        return None
 
+        if first_integrity_error:
+            raise CheckpointRecoveryError(
+                f"Nenhum checkpoint válido encontrado para thread_id={thread_id}"
+            ) from first_integrity_error
+
+        if invalid_count:
+            logger.warning(
+                "checkpoint.recovery.no_valid_langgraph_checkpoint "
+                "thread_id=%s invalid_count=%s",
+                thread_id,
+                invalid_count,
+            )
+
+        return None
 
 def _retry_policy_from_settings(settings) -> RetryPolicy:
     return RetryPolicy(

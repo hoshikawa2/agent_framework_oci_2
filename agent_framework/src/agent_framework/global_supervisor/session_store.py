@@ -40,3 +40,22 @@ class InMemoryGlobalSessionStore:
 
     async def dump(self) -> dict:
         return {k: asdict(v[1]) for k, v in self._data.items()}
+
+    async def rename_session(
+            self,
+            old_session_id: str,
+            new_session_id: str
+    ) -> GlobalSessionState | None:
+
+        item = self._data.pop(old_session_id, None)
+
+        if not item:
+            return None
+
+        ts, state = item
+
+        state.session_id = new_session_id
+
+        self._data[new_session_id] = (ts, state)
+
+        return state

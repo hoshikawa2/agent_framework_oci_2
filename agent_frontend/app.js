@@ -1,6 +1,7 @@
 const chat=document.getElementById('chat');
 const form=document.getElementById('form');
 let eventSource=null;
+let currentSessionId = null;
 
 function add(role,text){
   const d=document.createElement('div');
@@ -35,6 +36,97 @@ function syncDomainAliases(payload, businessContext){
     payload.invoice_id = businessContext.contract_key;
     payload.ura_call_id = businessContext.interaction_key;
     payload.asset_id = businessContext.resource_key;
+  }
+}
+
+function adicionarMensagem(role, text) {
+  const chat =
+      document.getElementById("chat") ||
+      document.getElementById("messages") ||
+      document.querySelector(".chat") ||
+      document.querySelector(".messages") ||
+      document.querySelector("[data-chat]");
+
+  if (!chat) {
+    console.error("Não encontrei o container do chat no HTML.");
+    console.log("Mensagem que seria exibida:", role, text);
+    return;
+  }
+
+  const div = document.createElement("div");
+
+  if (role === "user") {
+    div.className = "msg user chat-bubble--user";
+  } else {
+    div.className = "msg assistant chat-bubble--agent";
+  }
+
+  div.textContent = text || "";
+
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function abrirSSE(sessionId) {
+  if (!sessionId) {
+    console.error("Não vou abrir SSE sem sessionId.");
+    return;
+  }
+
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+
+  const url = `http://localhost:9000/gateway/events/${sessionId}`;
+
+  eventSource = new EventSource(url);
+
+  eventSource.onopen = () => {
+    console.log("SSE OPEN");
+  };
+
+  eventSource.onerror = (err) => {
+    console.error("SSE ERROR:", err);
+  };
+
+  const eventos = [
+    "connected",
+    "waiting",
+    "backend.selected",
+    "flow.start",
+    "workflow.started",
+    "message.responded",
+    "workflow.completed",
+    "flow.end",
+    "error"
+  ];
+
+  for (const nome of eventos) {
+    eventSource.addEventListener(nome, (event) => {
+
+      if (nome === "message.responded") {
+        try {
+          const data = JSON.parse(event.data);
+
+          const text =
+              data.text ||
+              data.message ||
+              data.response ||
+              data.content ||
+              data.output ||
+              event.data;
+
+          adicionarMensagem("assistant", text);
+        } catch {
+          adicionarMensagem("assistant", event.data);
+        }
+      }
+
+      if (nome === "error") {
+        adicionarMensagem("assistant", `Erro SSE: ${event.data}`);
+      }
+    });
   }
 }
 
@@ -93,12 +185,23 @@ form.addEventListener('submit', async (e)=>{
   try{
     const useSse=document.getElementById('useSse')?.checked;
     const endpoint=useSse?'/gateway/message/sse':'/gateway/message';
+    if(useSse){
+      connectSSE(backend, session);
+    }
     const res=await fetch(`${backend}${endpoint}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel, tenant_id:tenantId, agent_id:agentId, payload})});
     if(!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     const data=await res.json();
     document.getElementById('session').value=data.session_id || session;
+
+    if (data.text) {
+      adicionarMensagem("assistant", data.text);
+    }
+
+    if (data.session_id) {
+      currentSessionId = data.session_id;
+      abrirSSE(currentSessionId);
+    }
     if(!useSse) add('assistant', data.text || data.speak || JSON.stringify(data));
-    if(useSse && (!eventSource || eventSource._sessionId !== data.session_id)) connectSSE(backend, data.session_id);
   }catch(err){
     add('assistant', `Erro ao chamar backend: ${err.message}`);
     status('Erro de conexão');
