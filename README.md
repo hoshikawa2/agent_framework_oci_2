@@ -32,7 +32,7 @@ Memory / RAG / Vector / Graph / Telemetry / Streaming
 
 Suba a estrutura de Langfuse, MongoDB, REDIS para seu ambiente de desenvolvimento:
 
-Vá até o folder raiz, onde existe o docker-compose.yml e execute:
+Vá até o folder ./agent_framework/Infrastructure_Langfuse/, onde existe o docker-compose.yml e execute:
 
 ```bash
 docker compose up
@@ -40,7 +40,7 @@ docker compose up
 O langfuse estará em:
 
 ```bash
-http://localhost:3000
+http://localhost:3005
 ```
 Crie sua Organização e seu projeto
 
