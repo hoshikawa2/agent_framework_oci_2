@@ -65,5 +65,9 @@ class MCPRegistry:
                     "description": tool.description,
                     "server": server.name,
                     "args_schema": tool.args_schema,
+                    "tool_type": tool.tool_type,
+                    "requires": tool.requires,
+                    "confirmation_required": tool.confirmation_required,
+                    "execution_policy": tool.execution_policy,
                 })
         return out

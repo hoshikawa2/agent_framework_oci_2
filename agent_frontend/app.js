@@ -78,7 +78,7 @@ function abrirSSE(sessionId) {
     eventSource = null;
   }
 
-  const url = `http://localhost:9000/gateway/events/${sessionId}`;
+  const url = `${backend}/gateway/events/${sessionId}`;
 
   eventSource = new EventSource(url);
 
@@ -130,29 +130,133 @@ function abrirSSE(sessionId) {
   }
 }
 
-function connectSSE(backend, sessionId){
-  if(!sessionId) return;
-  if(eventSource) eventSource.close();
-  eventSource=new EventSource(`${backend}/gateway/events/${encodeURIComponent(sessionId)}`);
-  eventSource._sessionId=sessionId;
-  eventSource.addEventListener('connected', ()=>status('SSE conectado'));
-  eventSource.addEventListener('flow.start', ()=>status('Fluxo iniciado'));
-  eventSource.addEventListener('workflow.started', ()=>status('Workflow em execução'));
-  eventSource.addEventListener('session.upserted', e=>{
-    try{
-      const data=JSON.parse(e.data);
-      if(data.business_context) console.debug('business_context', data.business_context);
-    }catch(_){/* noop */}
+function connectSSE(backend, sessionId) {
+  if (!sessionId) {
+    console.warn("SSE não aberto: sessionId ausente.");
+    return;
+  }
+
+  if (!backend) {
+    console.warn("SSE não aberto: backend ausente.");
+    return;
+  }
+
+  if (eventSource) {
+    console.log("Fechando SSE anterior:", eventSource.url);
+    eventSource.close();
+    eventSource = null;
+  }
+
+  const url = `${backend.replace(/\/$/, "")}/gateway/events/${encodeURIComponent(sessionId)}`;
+
+  console.log("Abrindo SSE:", url);
+
+  eventSource = new EventSource(url);
+  eventSource._sessionId = sessionId;
+
+  eventSource.onopen = () => {
+    console.log("SSE OPEN:", url);
+    status("SSE conectado");
+  };
+
+  eventSource.onerror = (err) => {
+    console.error("SSE ERROR raw:", err);
+    console.error("SSE readyState:", eventSource?.readyState);
+    console.error("SSE url:", eventSource?.url);
+
+    if (eventSource?.readyState === EventSource.CONNECTING) {
+      status("SSE aguardando/reconectando");
+      return;
+    }
+
+    if (eventSource?.readyState === EventSource.CLOSED) {
+      status("SSE fechado");
+      return;
+    }
+
+    status("SSE com erro");
+  };
+
+  eventSource.addEventListener("connected", (event) => {
+    console.log("SSE connected:", event.data);
+    status("SSE conectado");
   });
-  eventSource.addEventListener('workflow.completed', ()=>status('Workflow concluído'));
-  eventSource.addEventListener('message.responded', e=>{
-    const data=JSON.parse(e.data);
-    if(data.text) add('assistant', data.text);
-    if(data.metadata?.business_context) console.debug('metadata.business_context', data.metadata.business_context);
-    status('Resposta recebida');
+
+  eventSource.addEventListener("waiting", (event) => {
+    console.log("SSE waiting:", event.data);
+    status("SSE aguardando backend");
   });
-  eventSource.addEventListener('flow.end', ()=>status('Fluxo finalizado'));
-  eventSource.onerror=()=>status('SSE desconectado ou aguardando backend');
+
+  eventSource.addEventListener("backend.selected", (event) => {
+    console.log("SSE backend.selected:", event.data);
+    status("Backend selecionado");
+  });
+
+  eventSource.addEventListener("flow.start", (event) => {
+    console.log("SSE flow.start:", event.data);
+    status("Fluxo iniciado");
+  });
+
+  eventSource.addEventListener("workflow.started", (event) => {
+    console.log("SSE workflow.started:", event.data);
+    status("Workflow em execução");
+  });
+
+  eventSource.addEventListener("session.upserted", (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.business_context) {
+        console.debug("business_context", data.business_context);
+      }
+    } catch (e) {
+      console.warn("Não consegui interpretar session.upserted:", event.data);
+    }
+  });
+
+  eventSource.addEventListener("message.responded", (event) => {
+    try {
+      const data = JSON.parse(event.data);
+
+      const text =
+          data.text ||
+          data.message ||
+          data.response ||
+          data.content ||
+          data.output ||
+          event.data;
+
+      if (text) {
+        add("assistant", text);
+      }
+
+      if (data.metadata?.business_context) {
+        console.debug("metadata.business_context", data.metadata.business_context);
+      }
+
+      status("Resposta recebida");
+    } catch (e) {
+      add("assistant", event.data);
+      status("Resposta recebida");
+    }
+  });
+
+  eventSource.addEventListener("workflow.completed", (event) => {
+    console.log("SSE workflow.completed:", event.data);
+    status("Workflow concluído");
+  });
+
+  eventSource.addEventListener("flow.end", (event) => {
+    console.log("SSE flow.end:", event.data);
+    status("Fluxo finalizado");
+  });
+
+  // Use um nome diferente de "error" para erro enviado pelo servidor.
+  // "error" é reservado/conflituoso com erro nativo do EventSource.
+  eventSource.addEventListener("server.error", (event) => {
+    console.error("SSE server.error:", event.data);
+    add("assistant", `Erro SSE: ${event.data || "erro informado pelo servidor"}`);
+    status("Erro no fluxo SSE");
+  });
 }
 
 form.addEventListener('submit', async (e)=>{
@@ -199,7 +303,7 @@ form.addEventListener('submit', async (e)=>{
 
     if (data.session_id) {
       currentSessionId = data.session_id;
-      abrirSSE(currentSessionId);
+      connectSSE(currentSessionId);
     }
     if(!useSse) add('assistant', data.text || data.speak || JSON.stringify(data));
   }catch(err){

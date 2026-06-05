@@ -16,6 +16,14 @@ class MCPToolConfig(BaseModel):
     enabled: bool = True
     args_schema: dict[str, Any] = Field(default_factory=dict)
 
+    # Política genérica opcional de execução da tool.
+    # Isso permite que o framework bloqueie tools de ação antes de chamar o MCP
+    # quando faltarem campos obrigatórios ou confirmação explícita.
+    tool_type: str | None = None
+    requires: list[str] = Field(default_factory=list)
+    confirmation_required: bool = False
+    execution_policy: dict[str, Any] = Field(default_factory=dict)
+
 class MCPToolResult(BaseModel):
     tool_name: str
     server_name: str
