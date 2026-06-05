@@ -2667,10 +2667,6 @@ source .venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 8300 --reload
 ```
 
-> **Note:** The **/scripts/** folder has automated MCP server startup scripts for educational purposes.
-> You can customize them to start all your MCP servers.
-> Run: `bash ./scripts/run_mcp_servers.sh`
-
 Then confirm that the endpoint configured in `config/mcp_servers.yaml` is correct:
 
 ```yaml
@@ -2678,6 +2674,11 @@ servers:
   financeiro:
     endpoint: http://localhost:8300/mcp
 ```
+
+> **Note:** The **/scripts/** folder contains automated scripts for starting the MCP server for educational purposes.
+> The **/agent_template_backend** folder has 2 configured MCP servers, one on port 8100 and another on port 8200. These services are ready and configured to run if you want to test the circuit.
+> You can customize it to start all your MCP servers.
+> Run: **bash ./scripts/run_mcp_servers.sh**
 
 ### 18.3. Test the tool through the backend
 
@@ -2697,7 +2698,17 @@ curl -X POST http://localhost:8000/debug/mcp/call \
 
 If the tool returns data, the backend, MCP Tool Router, parameter mapping, and MCP Server are aligned.
 
-### 18.4. How to interpret MCP errors
+### 18.4. Start the Frontend for Testing
+
+```bash
+cd agent_framework_oci
+cd agent_frontend
+python -m http.server 5173
+```
+
+Open http://localhost:5173.
+
+### 18.5. How to interpret MCP errors
 
 ```text
 Tool not found       → tools.yaml or routing.yaml references a wrong name.

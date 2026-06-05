@@ -628,7 +628,7 @@ tool_context = await self._collect_mcp_context(state)
 
 O desenvolvedor deve usar esse método quando basta chamar as tools definidas pela intent.
 
-Se o agente precisar escolher argumentos especiais por tool, pular tools perigosas, exigir confirmação ou montar parâmetros adicionais, ele pode implementar um método próprio no agente e chamar o router de forma mais controlada.
+Se o agente precisar escolher argumentos especiais por tool, pular tools perigosas, exigir confirmação ou montar parâmetros adicionais, ele pode implementar um método próprio no agente e chamar o router de forma mais controlada, como no exemplo do `BackofficeAgent`.
 
 #### 5.2.2.6. Como `_retrieve_rag_context()` funciona
 
@@ -1200,7 +1200,7 @@ Uma boa prática é emitir um IC de debug em ambiente não produtivo ou logar um
 
 ### 5.2.4. Recursos avançados agora padronizados pelo framework
 
-Nos primeiros exemplos deste tutorial, o agente usa diretamente métodos simples como `_collect_mcp_context()` e `_invoke_llm_cached()`. Isso é suficiente para agentes simples. Porém, em agentes reais migrados para o framework, aparecem necessidades adicionais:
+Nos primeiros exemplos deste tutorial, o agente usa diretamente métodos simples como `_collect_mcp_context()` e `_invoke_llm_cached()`. Isso é suficiente para agentes simples. Porém, em agentes reais migrados para o framework, como um Backoffice/ANATEL, aparecem necessidades adicionais:
 
 ```text
 normalizar tools por intent;
@@ -1212,7 +1212,7 @@ montar messages sem despejar o state inteiro no prompt;
 gerar fallback controlado quando o LLM falha.
 ```
 
-Por isso, a partir desta versão, elas passam a ser tratadas como **capacidades reutilizáveis do framework**, e não como código que cada agente deve copiar.
+Essas necessidades não são exclusivas do Backoffice. Por isso, a partir desta versão, elas passam a ser tratadas como **capacidades reutilizáveis do framework**, e não como código que cada agente deve copiar.
 
 #### 5.2.4.1. `RuntimeContext`: leitura canônica do state
 
@@ -2671,10 +2671,6 @@ source .venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 8300 --reload
 ```
 
->**Nota:** A pasta **/scripts/** possui scripts automatizados de inicialização do mcp server para efeitos didáticos.
-> Você pode customizar para subir todos os seus mcp servers.
-> Execute: bash ./scripts/run_mcp_servers.sh
-
 Depois confirme que o endpoint configurado em `config/mcp_servers.yaml` está correto:
 
 ```yaml
@@ -2682,6 +2678,11 @@ servers:
   financeiro:
     endpoint: http://localhost:8300/mcp
 ```
+
+>**Nota:** A pasta **/scripts/** possui scripts automatizados de inicialização do mcp server para efeitos didáticos.
+> A pasta **/agent_template_backend** possui 2 mcp servers configurados, um na porta 8100 e outro na 8200. Estes serviços estão prontos e configurados para execução caso queira testar o circuito.
+> Você pode customizar para subir todos os seus mcp servers.
+> Execute: **bash ./scripts/run_mcp_servers.sh**
 
 ### 18.3. Testar tool pelo backend
 
@@ -2708,7 +2709,7 @@ curl -X POST http://localhost:8000/debug/mcp/call/consultar_titulo_financeiro \
 
 >**Nota:** No projeto existe também uma interface visual para testar:
 
-Terminal 3:
+### 18.4. Subir Frontend para testes
 
 ```bash
 cd agent_framework_oci
@@ -2718,7 +2719,7 @@ python -m http.server 5173
 
 Abra http://localhost:5173.
 
-### 18.4. Como interpretar erros MCP
+### 18.5. Como interpretar erros MCP
 
 ```text
 Tool não encontrada         → tools.yaml ou nome da tool errado.
