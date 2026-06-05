@@ -2708,6 +2708,8 @@ python -m http.server 5173
 
 Open http://localhost:5173.
 
+>**Note:** The frontend is prepared for work with the **Agent Gateway**. In the project, see the chapter 28 and 28.10 to try it. Just remember to change **Backend URL** to **http://localhost:8010** because 8010 is the port where the **Agent Gateway** will be listening.
+
 ### 18.5. How to interpret MCP errors
 
 ```text
