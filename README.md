@@ -375,6 +375,66 @@ Esse arquivo deve conter a lógica específica do agente financeiro. Ele deve:
 8. Emitir IC de conclusão.
 9. Retornar dados para o workflow.
 
+
+### 5.2.1. Entendendo `state`, `context`, `session`, `business_context` e `tool_arguments`
+
+Antes de copiar o código do agente, o desenvolvedor precisa entender **de onde vêm os dados**. Em um agente corporativo, o erro mais comum é pegar qualquer campo diretamente do `state` sem saber se aquele dado veio do canal, do gateway, do identity resolver, do roteador ou do usuário.
+
+O `state` é o envelope completo da execução do LangGraph. Dentro dele normalmente existe um `context`, que é o contexto normalizado pelo framework.
+
+Dentro de `context`, se o projeto usa **Agent Gateway / Global Supervisor**, é comum existir também um bloco `session`:
+
+```python
+ctx = state.get("context") or {}
+session = ctx.get("session") or {}
+```
+
+O papel de cada bloco é diferente:
+
+```text
+state
+  Estado completo do workflow atual. Carrega texto, intent, route, resposta parcial,
+  resultados MCP, dados de guardrail, checkpoint e outros campos técnicos.
+
+context
+  Contexto normalizado da mensagem atual. Normalmente vem do Channel Gateway,
+  Identity Resolver e Agent Gateway.
+
+session
+  Dados da sessão e do canal. Ajuda a saber quem está conversando, por qual canal,
+  em qual tenant, qual sessão global está ativa e qual backend/agente está atendendo.
+
+business_context
+  Dados de negócio já normalizados. Exemplo: customer_key, contract_key,
+  interaction_key, session_key, protocol_id, invoice_id, order_id.
+
+tool_arguments
+  Parâmetros explícitos já preparados para tools/MCP. Quando existe, deve ter
+  prioridade sobre inferências feitas pelo agente.
+```
+
+A ordem de confiança recomendada é:
+
+```text
+1. tool_arguments explícitos
+2. business_context resolvido pelo framework
+3. context normalizado
+4. session e session.metadata, quando vierem do Agent Gateway
+5. state direto
+6. texto original do usuário, apenas para extração complementar
+```
+
+Essa ordem evita dois problemas:
+
+```text
+Problema 1: ignorar dados já resolvidos pelo Gateway/Identity Resolver.
+Problema 2: sobrescrever um parâmetro canônico com um valor bruto e menos confiável.
+```
+
+Exemplo prático: se o `business_context.customer_key` já foi resolvido pelo framework, o agente não deve preferir um `user_id` genérico da sessão apenas porque ele existe. O `user_id` identifica o usuário no canal; o `customer_key` identifica o cliente no negócio.
+
+Mesmo que um agente simples não use `session` diretamente, existe uma diferença entre **sessão técnica** e **contexto de negócio**.
+
 ### 5.3. Criar o arquivo do agente
 
 Crie:
@@ -414,10 +474,27 @@ class FinanceiroAgent(AgentRuntimeMixin):
             component="agent.financeiro.start",
         )
 
-        # 2. Recupera dados de sessão já resolvidos pelo gateway/framework.
-        session = (state.get("context") or {}).get("session", {})
+        # 2. Separa os blocos do contrato do framework.
+        # O agente lê esses blocos, mas quem cria/normaliza é o framework.
+        ctx = state.get("context") or {}
+        session = ctx.get("session") or {}
+        session_metadata = session.get("metadata") or {}
+        business_context = ctx.get("business_context") or state.get("business_context") or {}
+        tool_arguments = ctx.get("tool_arguments") or state.get("tool_arguments") or {}
 
-        # 3. Chama tools MCP selecionadas pelo roteamento, quando configuradas.
+        # 3. Interpreta a mensagem atual usando o texto já sanitizado pelos guardrails,
+        # mas preserva o texto original apenas quando precisar extrair identificadores.
+        user_text = state.get("sanitized_input") or state.get("user_text") or ""
+        original_text = (
+            ctx.get("message")
+            or ctx.get("text")
+            or ctx.get("query")
+            or session.get("last_user_message")
+            or state.get("user_text")
+            or user_text
+        )
+
+        # 4. Chama tools MCP selecionadas pelo roteamento, quando configuradas.
         # O agente não precisa saber se a tool usa REST, SOAP, DB ou mock.
         tool_context = await self._collect_tool_context(state)
 
@@ -429,10 +506,10 @@ class FinanceiroAgent(AgentRuntimeMixin):
                 component="agent.financeiro.mcp",
             )
 
-        # 4. Recupera contexto documental, se o RAG estiver habilitado.
+        # 5. Recupera contexto documental, se o RAG estiver habilitado.
         rag_context, rag_metadata = await self._retrieve_rag_context(state)
 
-        # 5. Monta a mensagem para o LLM.
+        # 6. Monta a mensagem para o LLM.
         # O system prompt define comportamento e limites do agente.
         # O user prompt leva dados, evidências e contexto.
         messages = [
@@ -455,10 +532,10 @@ class FinanceiroAgent(AgentRuntimeMixin):
             },
         ]
 
-        # 6. Chama o LLM usando o runtime comum, com cache e telemetria.
+        # 7. Chama o LLM usando o runtime comum, com cache e telemetria.
         answer = await self._invoke_llm_cached(state, "FinanceiroAgent", messages)
 
-        # 7. Retorna no contrato esperado pelo workflow.
+        # 8. Retorna no contrato esperado pelo workflow.
         result = {
             "answer": f"[FinanceiroAgent] {answer}",
             "next_state": "FINANCEIRO_ACTIVE",
@@ -466,7 +543,7 @@ class FinanceiroAgent(AgentRuntimeMixin):
             "rag": rag_metadata,
         }
 
-        # 8. Marca o fim da jornada de negócio.
+        # 9. Marca o fim da jornada de negócio.
         await self._emit_ic(
             "IC.FINANCEIRO_AGENT_COMPLETED",
             state,
@@ -485,6 +562,62 @@ class FinanceiroAgent(AgentRuntimeMixin):
         # As tools chamadas dependem da intent definida em routing.yaml.
         return await self._collect_mcp_context(state)
 ```
+
+### 5.3.1. Como adaptar esse exemplo para um agente real
+
+No exemplo acima, `session`, `business_context` e `tool_arguments` aparecem no prompt para fins didáticos. Em produção, o desenvolvedor deve evitar jogar objetos enormes diretamente no prompt. O ideal é selecionar apenas os campos necessários.
+
+Exemplo de raciocínio para um agente financeiro:
+
+```text
+session.channel       → útil para ajustar linguagem ou entender origem da conversa.
+session.tenant_id     → útil para isolamento multi-tenant.
+business_context.customer_key → útil para consultar cliente/título/pagamento.
+business_context.contract_key → útil para consultar contrato, fatura ou pedido.
+business_context.interaction_key → útil para rastrear protocolo/chamado/interação.
+tool_arguments        → útil quando o Gateway ou Identity Resolver já preparou parâmetros exatos.
+```
+
+Uma função utilitária comum dentro do agente é um `pick()` com ordem de precedência explícita:
+
+```python
+def pick(name: str, *, tool_arguments, business_context, ctx, session, session_metadata, state):
+    if name in tool_arguments:
+        return tool_arguments.get(name)
+    if isinstance(business_context, dict) and name in business_context:
+        return business_context.get(name)
+    if name in ctx:
+        return ctx.get(name)
+    if name in session:
+        return session.get(name)
+    if name in session_metadata:
+        return session_metadata.get(name)
+    return state.get(name)
+```
+
+Essa função deixa claro que o agente não está “adivinhando” de onde vem o dado. Ele está seguindo uma política de confiança.
+
+### 5.3.2. Onde entra o Agent Gateway nesse código?
+
+Quando existe Agent Gateway / Global Supervisor, ele pode enriquecer a mensagem antes de enviá-la ao backend do agente. Exemplos de dados que podem chegar em `context.session`:
+
+```json
+{
+  "session": {
+    "global_session_id": "s1",
+    "backend_session_id": "default:financeiro_agent:s1",
+    "active_backend": "financeiro",
+    "channel": "web",
+    "tenant_id": "default",
+    "metadata": {
+      "selected_backend": "financeiro",
+      "last_reason": "Backend escolhido por regras: matches=['pagamento']"
+    }
+  }
+}
+```
+
+O agente não deve usar esse bloco para tomar decisão de negócio final. Ele deve usá-lo para contexto técnico, rastreabilidade e continuidade da conversa. A decisão de negócio deve continuar baseada em `business_context`, tools MCP, RAG e regras de domínio.
 
 ### 5.4. Como saber se o agente está bem implementado?
 
@@ -1179,6 +1312,8 @@ identity:
       description: Cliente canônico.
       sources:
         - business_context.customer_key
+        - context.business_context.customer_key
+        - context.session.metadata.customer_key
         - customer_key
         - customer_id
         - cpf
@@ -1188,6 +1323,8 @@ identity:
       description: Contrato, pedido, fatura ou título principal.
       sources:
         - business_context.contract_key
+        - context.business_context.contract_key
+        - context.session.metadata.contract_key
         - contract_key
         - contract_id
         - invoice_id
@@ -1196,6 +1333,8 @@ identity:
       description: Chave externa da interação.
       sources:
         - business_context.interaction_key
+        - context.business_context.interaction_key
+        - context.session.metadata.interaction_key
         - interaction_key
         - call_id
         - message_id
@@ -1204,6 +1343,10 @@ identity:
       description: Sessão técnica estável.
       sources:
         - business_context.session_key
+        - context.business_context.session_key
+        - context.session.backend_session_id
+        - context.session.global_session_id
+        - context.session.metadata.session_key
         - session_key
         - conversation_key
         - session_id
@@ -1214,6 +1357,41 @@ identity:
 Use o mínimo necessário. Não torne tudo obrigatório. Para uma pergunta genérica, talvez só `session_key` seja suficiente. Para consultar um título financeiro, talvez `customer_key` e `contract_key` sejam obrigatórios.
 
 A identidade resolvida aparece em `business_context` dentro do `state` e é usada pelo `MCP Tool Router`.
+
+### 14.4. Relação entre SessionContext e BusinessContext
+
+Quando o Agent Gateway está presente, ele pode criar ou transportar dados de sessão. Esses dados são importantes, mas não substituem a identidade de negócio.
+
+```text
+SessionContext responde:
+  Quem está falando?
+  Por qual canal?
+  Qual sessão global está ativa?
+  Qual backend está atendendo?
+  Qual foi a razão da última decisão de rota?
+
+BusinessContext responde:
+  Qual cliente deve ser consultado?
+  Qual contrato/fatura/pedido está em discussão?
+  Qual protocolo/chamado/interação identifica o caso?
+  Qual chave deve ser enviada para a tool MCP?
+```
+
+Regra prática:
+
+```text
+Use session para continuidade, rastreabilidade e canal.
+Use business_context para consultar sistemas, chamar MCP e tomar decisão de negócio.
+Use tool_arguments quando parâmetros já vierem explicitamente preparados.
+```
+
+Exemplo de erro comum:
+
+```text
+Usar session.user_id como customer_key sem validar identity.yaml.
+```
+
+O correto é deixar o `IdentityResolver` transformar `user_id`, `cpf`, `msisdn`, `customer_id` ou outro identificador em uma chave canônica como `customer_key`.
 
 ---
 
@@ -1750,6 +1928,8 @@ Use este checklist antes de considerar o agente pronto.
 - [ ] Arquivo criado em `app/agents/<agent>.py`.
 - [ ] Classe implementa `async def run(self, state)`.
 - [ ] Agente herda `AgentRuntimeMixin`.
+- [ ] Agente separa `context`, `session`, `business_context` e `tool_arguments` antes de tomar decisões.
+- [ ] Agente usa `business_context` para decisões de negócio e `session` para continuidade/rastreabilidade.
 - [ ] Prompts específicos aplicam `apply_agent_profile_prompt()`.
 - [ ] Tools são chamadas via `_collect_mcp_context()`.
 - [ ] RAG é chamado via `_retrieve_rag_context()`, se aplicável.
@@ -2361,6 +2541,44 @@ O código do Gateway ajusta a resposta para manter os dois identificadores no `m
 ```
 
 Essa separação é importante porque o usuário conversa com uma sessão global, mas cada backend pode precisar de sua própria chave interna para memória, checkpoint e histórico.
+
+### 28.9.1. Como o Gateway deve entregar sessão ao backend
+
+Para que o agente consiga entender de onde veio a conversa, o Gateway deve encaminhar a sessão dentro de `context.session` ou em uma estrutura equivalente normalizada pelo framework.
+
+Exemplo de payload conceitual que chega ao backend:
+
+```json
+{
+  "channel": "web",
+  "tenant_id": "default",
+  "agent_id": "financeiro_agent",
+  "payload": {
+    "text": "Quero consultar meu pagamento",
+    "session_id": "s1",
+    "customer_id": "12345"
+  },
+  "context": {
+    "session": {
+      "global_session_id": "s1",
+      "backend_session_id": "default:financeiro_agent:s1",
+      "active_backend": "financeiro",
+      "channel": "web",
+      "tenant_id": "default",
+      "metadata": {
+        "selected_backend": "financeiro",
+        "route_confidence": 0.82
+      }
+    },
+    "business_context": {
+      "customer_key": "12345",
+      "session_key": "default:financeiro_agent:s1"
+    }
+  }
+}
+```
+
+O desenvolvedor do agente deve entender que `context.session` não é “mais um lugar para buscar qualquer parâmetro”. Ele é o contrato de continuidade da conversa. Para chamadas MCP, prefira sempre `business_context` e `tool_arguments`.
 
 ### 28.10. Subindo o Agent Gateway localmente
 
