@@ -4,6 +4,8 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+from agent_framework.memory.summary_memory import MemoryContext, render_recent_messages
+
 
 _EMPTY_VALUES = (None, "", {}, [])
 
@@ -363,6 +365,120 @@ class AgentRuntimeMixin:
         return await self.execute_tools_for_intent(state)
 
     # ------------------------------------------------------------------
+    # Conversation memory / context compression
+    # ------------------------------------------------------------------
+    async def prepare_memory_context(
+        self,
+        state: dict[str, Any],
+        *,
+        session_id: str | None = None,
+        force: bool = False,
+    ) -> MemoryContext | None:
+        """Prepara memória conversacional para o próximo prompt.
+
+        Esta etapa é assíncrona porque pode consultar banco e, quando a
+        estratégia for `summary`, chamar o LLM para compactar mensagens antigas.
+        O resultado é salvo em `state['memory_context']`; o método sync
+        `build_messages()` apenas injeta esse contexto já preparado.
+        """
+        settings = getattr(self, "settings", None)
+        if not settings:
+            return None
+
+        runtime = self.get_runtime_context(state)
+        resolved_session_id = (
+            session_id
+            or state.get("conversation_key")
+            or state.get("session_id")
+            or runtime.session.get("backend_session_id")
+            or runtime.session.get("global_session_id")
+            or runtime.session.get("session_id")
+        )
+        if not resolved_session_id:
+            return None
+
+        summary_memory = getattr(self, "summary_memory", None)
+        if summary_memory is None:
+            from agent_framework.memory.message_history import create_memory
+            from agent_framework.memory.summary_memory import create_conversation_summary_memory
+
+            message_history = (
+                getattr(self, "memory", None)
+                or getattr(self, "message_history", None)
+                or create_memory(settings)
+            )
+            summary_memory = create_conversation_summary_memory(
+                settings,
+                message_history=message_history,
+                llm=getattr(self, "llm", None),
+                telemetry=getattr(self, "telemetry", None),
+            )
+            try:
+                self.summary_memory = summary_memory
+            except Exception:
+                pass
+
+        memory_context = await summary_memory.prepare_context(resolved_session_id, force=force)
+        state["memory_context"] = memory_context
+        state["memory_context_metadata"] = memory_context.metadata
+
+        if memory_context.compressed:
+            await self._emit_ic(
+                "IC.MEMORY_COMPRESSION_TRIGGERED",
+                state,
+                {"session_id": resolved_session_id, **memory_context.metadata},
+                component="agent_runtime.memory",
+            )
+        elif memory_context.has_content():
+            await self._emit_ic(
+                "IC.MEMORY_CONTEXT_LOADED",
+                state,
+                {"session_id": resolved_session_id, **memory_context.metadata},
+                component="agent_runtime.memory",
+            )
+        return memory_context
+
+    def _coerce_memory_context(self, value: Any) -> MemoryContext | None:
+        if value is None:
+            return None
+        if isinstance(value, MemoryContext):
+            return value
+        if isinstance(value, dict):
+            return MemoryContext(
+                summary=str(value.get("summary") or ""),
+                recent_messages=list(value.get("recent_messages") or []),
+                compressed=bool(value.get("compressed", False)),
+                metadata=dict(value.get("metadata") or {}),
+            )
+        return None
+
+    def _render_memory_sections(self, state: dict[str, Any]) -> list[str]:
+        settings = getattr(self, "settings", None)
+        memory_context = self._coerce_memory_context(state.get("memory_context"))
+        if not memory_context or not memory_context.has_content():
+            return []
+
+        inject_summary = bool(getattr(settings, "MEMORY_INJECT_SUMMARY", True)) if settings else True
+        inject_recent = bool(getattr(settings, "MEMORY_INJECT_RECENT_MESSAGES", True)) if settings else True
+        sections: list[str] = []
+        if inject_summary and memory_context.summary:
+            sections.append(f"Resumo da conversa até agora:\n{memory_context.summary}")
+        if inject_recent and memory_context.recent_messages:
+            # recent_messages pode vir como ChatMessage ou dict em testes.
+            normalized = []
+            for item in memory_context.recent_messages:
+                if hasattr(item, "role") and hasattr(item, "content"):
+                    normalized.append(item)
+                elif isinstance(item, dict):
+                    from agent_framework.models.session import ChatMessage
+
+                    normalized.append(ChatMessage(role=item.get("role", "unknown"), content=item.get("content", ""), metadata=item.get("metadata") or {}))
+            rendered = render_recent_messages(normalized)
+            if rendered:
+                sections.append(f"Últimas mensagens completas da conversa:\n{rendered}")
+        return sections
+
+    # ------------------------------------------------------------------
     # Messages / LLM / cache
     # ------------------------------------------------------------------
     def build_messages(
@@ -378,10 +494,12 @@ class AgentRuntimeMixin:
         extra_sections: dict[str, Any] | None = None,
     ) -> list[dict[str, str]]:
         runtime = self.get_runtime_context(state)
-        sections = [
+        sections = []
+        sections.extend(self._render_memory_sections(state))
+        sections.extend([
             f"Mensagem do usuário:\n{user_text if user_text is not None else runtime.sanitized_input}",
             f"Intent/rota escolhidos pelo framework:\nintent={state.get('intent')} route={state.get('route')}",
-        ]
+        ])
         if include_business_context:
             sections.append(f"BusinessContext canônico:\n{runtime.business_context or '[sem business_context]'}")
         if mcp_results is not None:

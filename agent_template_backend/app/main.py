@@ -18,6 +18,7 @@ from agent_framework.observability.observer import AgentObserver
 from agent_framework.observer import configure as configure_global_observer
 from agent_framework.llm.providers import create_llm
 from agent_framework.memory.message_history import create_memory
+from agent_framework.memory.summary_memory import create_conversation_summary_memory
 from agent_framework.mcp.tool_router import create_mcp_tool_router
 from agent_framework.models.identity import AgentIdentity
 from agent_framework.identity import IdentityResolver, BusinessContext
@@ -47,6 +48,7 @@ telemetry = Telemetry(settings)
 usage_repository = create_usage_repository(settings)
 llm = create_llm(settings, telemetry=telemetry, usage_repository=usage_repository)
 memory = create_memory(settings)
+summary_memory = create_conversation_summary_memory(settings, message_history=memory, llm=llm, telemetry=telemetry)
 sessions = create_session_repository(settings)
 checkpoints = create_checkpoint_repository(settings)
 cache = create_cache(settings, telemetry=telemetry)
@@ -62,7 +64,7 @@ tool_router = create_mcp_tool_router(settings, telemetry=telemetry)
 identity_resolver = IdentityResolver.from_yaml(settings.IDENTITY_CONFIG_PATH)
 agent_profiles = AgentProfileRegistry(settings)
 sse_hub = SSEHub(settings, telemetry=telemetry)
-workflow = AgentWorkflow(llm, memory, telemetry, analytics, settings, observer=observer, tool_router=tool_router)
+workflow = AgentWorkflow(llm, memory, telemetry, analytics, settings, observer=observer, tool_router=tool_router, summary_memory=summary_memory)
 
 logger.info("LLM provider carregado: %s", llm.__class__.__name__)
 logger.info("Langfuse habilitado: %s host=%s", telemetry.is_enabled(), settings.LANGFUSE_HOST)

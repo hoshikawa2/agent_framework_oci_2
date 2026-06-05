@@ -53,6 +53,15 @@ class SQLiteStore:
             unique(session_id, message_id)
         );
         create index if not exists idx_agent_messages_session_created on agent_messages(session_id, created_at, id);
+        create table if not exists agent_memory_summaries (
+            session_id text primary key,
+            summary text not null,
+            last_message_created_at text,
+            message_count_summarized integer not null default 0,
+            metadata_json text,
+            created_at text not null,
+            updated_at text not null
+        );
         create table if not exists workflow_checkpoints (
             id integer primary key autoincrement,
             thread_id text not null,
@@ -126,6 +135,30 @@ class SQLiteStore:
             d['metadata']=_json_loads(d.pop('metadata_json', None), {})
             out.append(d)
         return out
+
+    def get_memory_summary(self, session_id: str) -> dict | None:
+        with self._lock, self.connect() as con:
+            row = con.execute('select * from agent_memory_summaries where session_id=?', (session_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d['metadata'] = _json_loads(d.pop('metadata_json', None), {})
+        return d
+
+    def upsert_memory_summary(self, session_id: str, summary: str, last_message_created_at: str | None, message_count_summarized: int, metadata: dict | None):
+        now = self.now()
+        with self._lock, self.connect() as con:
+            existing = con.execute('select created_at from agent_memory_summaries where session_id=?', (session_id,)).fetchone()
+            created_at = existing['created_at'] if existing else now
+            con.execute('''
+                insert or replace into agent_memory_summaries(
+                    session_id, summary, last_message_created_at, message_count_summarized, metadata_json, created_at, updated_at
+                ) values(?,?,?,?,?,?,?)
+            ''', (session_id, summary or '', last_message_created_at, int(message_count_summarized or 0), _json_dumps(metadata or {}), created_at, now))
+
+    def delete_memory_summary(self, session_id: str):
+        with self._lock, self.connect() as con:
+            con.execute('delete from agent_memory_summaries where session_id=?', (session_id,))
 
     def put_checkpoint(self, thread_id: str, checkpoint: dict):
         with self._lock, self.connect() as con:

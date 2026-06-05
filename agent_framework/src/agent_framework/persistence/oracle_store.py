@@ -129,6 +129,17 @@ class OracleStore:
             """)
             self._exec_ddl_ignore_exists(cur, f"create index {self.t('IX_MSG_SESSION')} on {self.t('AGENT_MESSAGE')}(SESSION_ID, CREATED_AT)")
             self._exec_ddl_ignore_exists(cur, f"""
+                create table {self.t('MEMORY_SUMMARY')} (
+                    SESSION_ID varchar2(256) primary key,
+                    SUMMARY clob,
+                    LAST_MESSAGE_CREATED_AT varchar2(128),
+                    MESSAGE_COUNT_SUMMARIZED number default 0 not null,
+                    METADATA_JSON clob check (METADATA_JSON is json),
+                    CREATED_AT timestamp with time zone not null,
+                    UPDATED_AT timestamp with time zone not null
+                )
+            """)
+            self._exec_ddl_ignore_exists(cur, f"""
                 create table {self.t('WORKFLOW_CHECKPOINT')} (
                     ID number generated always as identity primary key,
                     THREAD_ID varchar2(256) not null,
@@ -294,6 +305,67 @@ class OracleStore:
                     d[key.replace("_json", "")] = _json_loads(v.read() if hasattr(v,"read") else v, {})
                 out.append(d)
             return out
+
+    async def get_memory_summary(self, session_id: str) -> dict | None:
+        return await asyncio.to_thread(self._get_memory_summary, session_id)
+
+    def _get_memory_summary(self, session_id):
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"select SESSION_ID,SUMMARY,LAST_MESSAGE_CREATED_AT,MESSAGE_COUNT_SUMMARIZED,METADATA_JSON,CREATED_AT,UPDATED_AT from {self.t('MEMORY_SUMMARY')} where SESSION_ID=:1",
+                [session_id],
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            d = {
+                "session_id": row[0],
+                "summary": row[1].read() if hasattr(row[1], "read") else (row[1] or ""),
+                "last_message_created_at": row[2],
+                "message_count_summarized": int(row[3] or 0),
+                "metadata": _json_loads(row[4].read() if hasattr(row[4], "read") else row[4], {}),
+                "created_at": str(row[5]) if row[5] is not None else None,
+                "updated_at": str(row[6]) if row[6] is not None else None,
+            }
+            return d
+
+    async def upsert_memory_summary(self, session_id: str, summary: str, last_message_created_at: str | None, message_count_summarized: int, metadata: dict | None):
+        return await asyncio.to_thread(self._upsert_memory_summary, session_id, summary, last_message_created_at, message_count_summarized, metadata)
+
+    def _upsert_memory_summary(self, session_id, summary, last_message_created_at, message_count_summarized, metadata):
+        now = self.now()
+        sql = f"""
+            merge into {self.t('MEMORY_SUMMARY')} t
+            using (select :session_id SESSION_ID from dual) s
+            on (t.SESSION_ID = s.SESSION_ID)
+            when matched then update set
+                SUMMARY=:summary,
+                LAST_MESSAGE_CREATED_AT=:last_message_created_at,
+                MESSAGE_COUNT_SUMMARIZED=:message_count_summarized,
+                METADATA_JSON=:metadata_json,
+                UPDATED_AT=:updated_at
+            when not matched then insert
+                (SESSION_ID,SUMMARY,LAST_MESSAGE_CREATED_AT,MESSAGE_COUNT_SUMMARIZED,METADATA_JSON,CREATED_AT,UPDATED_AT)
+                values (:session_id,:summary,:last_message_created_at,:message_count_summarized,:metadata_json,:created_at,:updated_at)
+        """
+        with self.connect() as conn:
+            conn.cursor().execute(sql, dict(
+                session_id=session_id,
+                summary=summary or "",
+                last_message_created_at=last_message_created_at,
+                message_count_summarized=int(message_count_summarized or 0),
+                metadata_json=_json_dumps(metadata),
+                created_at=now,
+                updated_at=now,
+            ))
+
+    async def delete_memory_summary(self, session_id: str):
+        return await asyncio.to_thread(self._delete_memory_summary, session_id)
+
+    def _delete_memory_summary(self, session_id):
+        with self.connect() as conn:
+            conn.cursor().execute(f"delete from {self.t('MEMORY_SUMMARY')} where SESSION_ID=:1", [session_id])
 
     async def put_checkpoint(self, thread_id: str, checkpoint: dict, metadata: dict | None = None):
         return await asyncio.to_thread(self._put_checkpoint, thread_id, checkpoint, metadata)

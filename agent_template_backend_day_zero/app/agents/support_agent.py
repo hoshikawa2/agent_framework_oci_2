@@ -1,14 +1,8 @@
 """
 DAY ZERO TEMPLATE - SupportAgent
 
-Este arquivo foi copiado do agent_template_backend original.
-A implementação de exemplo do agente foi comentada ao final do arquivo.
-
-Como usar:
-1. Mantenha o nome da classe se quiser reaproveitar o workflow atual sem mexer no graph.
-2. Substitua o método run() pela lógica do seu agente.
-3. Use AgentRuntimeMixin para reaproveitar MCP, RAG, cache e chamada LLM com telemetria.
-4. Quando criar um agente real, remova o bloco "IMPLEMENTAÇÃO ORIGINAL COMENTADA" se não precisar mais da referência.
+Esqueleto mínimo já compatível com ConversationSummaryMemory.
+Substitua o prompt e a regra de negócio conforme o seu agente.
 """
 
 from app.agents.prompting import apply_agent_profile_prompt
@@ -16,15 +10,20 @@ from app.agents.runtime import AgentRuntimeMixin
 
 
 class SupportAgent(AgentRuntimeMixin):
-    """Esqueleto de agente para desenvolvimento Day Zero.
-
-    Este agente está propositalmente mínimo. O código real do exemplo original
-    permanece comentado abaixo para o desenvolvedor copiar/adaptar.
-    """
-
     name = "support_agent"
 
-    def __init__(self, llm, telemetry=None, tool_router=None, rag_service=None, cache=None, settings=None, observer=None):
+    def __init__(
+        self,
+        llm,
+        telemetry=None,
+        tool_router=None,
+        rag_service=None,
+        cache=None,
+        settings=None,
+        observer=None,
+        memory=None,
+        summary_memory=None,
+    ):
         self.llm = llm
         self.telemetry = telemetry
         self.tool_router = tool_router
@@ -32,90 +31,37 @@ class SupportAgent(AgentRuntimeMixin):
         self.cache = cache
         self.settings = settings
         self.observer = observer
+        self.memory = memory
+        self.summary_memory = summary_memory
 
     async def run(self, state):
-        """Implemente aqui a regra de negócio do seu agente.
+        # OPCIONAL: habilite quando seu agente precisar de MCP/RAG.
+        tool_context = []
+        rag_context = None
+        rag_metadata = {}
 
-        Exemplo mínimo:
-        - lê a mensagem sanitizada do usuário;
-        - monta mensagens para o LLM;
-        - chama _invoke_llm_cached();
-        - retorna answer e next_state.
-        """
+        # Prepara a memória resumida antes do prompt.
+        await self.prepare_memory_context(state)
 
-        user_text = state.get("sanitized_input") or state.get("user_text", "")
-
-        # OPCIONAL: descomente quando seu agente precisar de tools MCP.
-        # tool_context = await self._collect_tool_context(state)
-
-        # OPCIONAL: descomente quando seu agente precisar de RAG.
-        # rag_context, rag_metadata = await self._retrieve_rag_context(state)
-
-        messages = [
-            {
-                "role": "system",
-                "content": apply_agent_profile_prompt(
-                    state,
-                    "Você é um agente de exemplo. Substitua este prompt pelo papel do seu agente.",
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Mensagem do usuário: {user_text}",
-            },
-        ]
+        messages = self.build_messages(
+            state,
+            system_prompt=apply_agent_profile_prompt(
+                state,
+                "Você é um agente de suporte de varejo para troca, devolução e garantia.",
+            ),
+            mcp_results=tool_context,
+            rag_context=rag_context,
+            rag_metadata=rag_metadata,
+        )
 
         answer = await self._invoke_llm_cached(state, "SupportAgent", messages)
-
         return {
             "answer": answer,
             "next_state": "DAY_ZERO_ACTIVE",
-            # "mcp_results": tool_context,
-            # "rag": rag_metadata,
+            "mcp_results": tool_context,
+            "rag": rag_metadata,
+            "memory_context_metadata": state.get("memory_context_metadata"),
         }
 
     async def _collect_tool_context(self, state):
-        """Atalho para MCP. Mantenha se seu agente for chamar tools MCP."""
         return await self._collect_mcp_context(state)
-
-
-# ============================================================================
-# IMPLEMENTAÇÃO ORIGINAL COMENTADA - EXEMPLO DE AGENTE DE SUPORTE/TROCA/DEVOLUÇÃO
-# ============================================================================
-# O bloco abaixo é o código original do template completo.
-# Ele está comentado para servir de referência ao desenvolvedor.
-# Copie trechos para o método run() acima quando fizer sentido.
-# ============================================================================
-
-# from app.agents.prompting import apply_agent_profile_prompt
-# from app.agents.runtime import AgentRuntimeMixin
-#
-# class SupportAgent(AgentRuntimeMixin):
-#     name = "support_agent"
-#
-#     def __init__(self, llm, telemetry=None, tool_router=None, rag_service=None, cache=None, settings=None, observer=None):
-#         self.llm = llm
-#         self.telemetry = telemetry
-#         self.tool_router = tool_router
-#         self.rag_service = rag_service
-#         self.cache = cache
-#         self.settings = settings
-        self.observer = observer
-#
-#     async def run(self, state):
-#         tool_context = await self._collect_tool_context(state)
-#         rag_context, rag_metadata = await self._retrieve_rag_context(state)
-#         messages = [
-#             {"role": "system", "content": apply_agent_profile_prompt(state, "Você é um agente de suporte de varejo para troca, devolução e garantia.")},
-#             {"role": "user", "content": (
-#                 f"Mensagem: {state.get('sanitized_input') or state['user_text']}\n"
-#                 f"Intent: {state.get('intent')}\n"
-#                 f"Dados MCP: {tool_context}\n"
-#                 f"Contexto RAG: {rag_context}"
-#             )},
-#         ]
-#         answer = await self._invoke_llm_cached(state, "SupportAgent", messages)
-#         return {"answer": f"[SupportAgent] {answer}", "next_state": "SUPPORT_ACTIVE", "mcp_results": tool_context, "rag": rag_metadata}
-#
-#     async def _collect_tool_context(self, state):
-#         return await self._collect_mcp_context(state)

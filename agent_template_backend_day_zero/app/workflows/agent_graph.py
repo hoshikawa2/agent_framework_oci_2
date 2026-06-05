@@ -84,7 +84,7 @@ class AgentWorkflow:
     Em ambos os modos, memória/checkpoint/session usam tenant_id:agent_id:session_id.
     """
 
-    def __init__(self, llm, memory, telemetry, analytics, settings, observer: AgentObserver | None = None, tool_router=None):
+    def __init__(self, llm, memory, telemetry, analytics, settings, observer: AgentObserver | None = None, tool_router=None, summary_memory=None):
         self.llm = llm
         self.memory = memory
         self.telemetry = telemetry
@@ -92,6 +92,7 @@ class AgentWorkflow:
         self.observer = observer or AgentObserver(analytics=analytics)
         self.settings = settings
         self.tool_router = tool_router
+        self.summary_memory = summary_memory
         self.guardrails = GuardrailPipeline(
             observer=self.observer,
             enable_parallel=bool(getattr(settings, "ENABLE_PARALLEL_GUARDRAILS", True)),
@@ -113,7 +114,7 @@ class AgentWorkflow:
         self.cache = create_cache(settings)
         self.rag_service = RagService(settings, telemetry=telemetry)
         self.router = EnterpriseRouter(settings, llm=llm, telemetry=telemetry)
-        agent_kwargs = {"telemetry": telemetry, "tool_router": getattr(self, "tool_router", None), "rag_service": self.rag_service, "cache": self.cache, "settings": settings, "observer": self.observer}
+        agent_kwargs = {"telemetry": telemetry, "tool_router": getattr(self, "tool_router", None), "rag_service": self.rag_service, "cache": self.cache, "settings": settings, "observer": self.observer, "memory": memory, "summary_memory": summary_memory}
         self.billing = BillingAgent(llm, **agent_kwargs)
         self.product = ProductAgent(llm, **agent_kwargs)
         self.orders = OrdersAgent(llm, **agent_kwargs)

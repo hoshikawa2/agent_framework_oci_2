@@ -31,6 +31,20 @@ class Settings(BaseSettings):
     MEMORY_REPOSITORY_PROVIDER: Literal['memory','sqlite','autonomous','oracle','mongodb'] = 'memory'
     CHECKPOINT_REPOSITORY_PROVIDER: Literal['memory','sqlite','autonomous','oracle','mongodb'] = 'memory'
 
+    # ConversationSummaryMemory: compressão de contexto conversacional.
+    # none    = não injeta histórico no prompt
+    # window  = injeta somente últimas mensagens
+    # summary = resumo acumulado + últimas mensagens completas
+    ENABLE_CONVERSATION_SUMMARY_MEMORY: bool = False
+    MEMORY_CONTEXT_STRATEGY: Literal['none','window','summary'] = 'window'
+    MEMORY_HISTORY_LIMIT: int = 80
+    MEMORY_RECENT_MESSAGES_LIMIT: int = 8
+    MEMORY_SUMMARY_TRIGGER_MESSAGES: int = 20
+    MEMORY_MAX_SUMMARY_CHARS: int = 6000
+    MEMORY_SUMMARY_USE_LLM: bool = True
+    MEMORY_INJECT_RECENT_MESSAGES: bool = True
+    MEMORY_INJECT_SUMMARY: bool = True
+
     # LangGraph enterprise checkpointing
     ENABLE_RESILIENT_CHECKPOINTER: bool = True
     ENABLE_CHECKPOINT_INTEGRITY: bool = True

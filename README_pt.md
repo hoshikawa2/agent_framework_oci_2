@@ -4092,7 +4092,538 @@ Ele não deve alterar o frontend para cada novo agente. Também não deve coloca
 
 ---
 
-## 29. Conclusão
+
+## 29. Compressão de contexto com `ConversationSummaryMemory`
+
+Este capítulo explica a teoria, a arquitetura e o passo a passo para implementar compressão de contexto conversacional usando `ConversationSummaryMemory`.
+
+A motivação é simples: conversas corporativas longas acumulam muitas mensagens, resultados de tools, evidências MCP, contexto RAG, decisões de roteamento, erros operacionais e confirmações do usuário. Se todo esse histórico for enviado integralmente ao LLM a cada turno, o agente fica mais caro, mais lento e mais sujeito a extrapolar a janela de contexto.
+
+A `ConversationSummaryMemory` resolve esse problema mantendo dois níveis de memória:
+
+```text
+Memória bruta
+  Histórico completo salvo no repositório de mensagens.
+  Serve para auditoria, replay, debug e rastreabilidade.
+
+Memória resumida
+  Resumo incremental da parte antiga da conversa.
+  Serve para montar o prompt sem carregar todo o histórico.
+
+Mensagens recentes
+  Últimas interações completas.
+  Servem para preservar detalhes imediatos, confirmações e continuidade local.
+```
+
+O objetivo não é apagar o histórico. O objetivo é separar **persistência completa** de **contexto útil para inferência**.
+
+### 29.1. Problema que a compressão resolve
+
+Sem compressão, o agente tende a usar uma destas estratégias:
+
+```text
+Estratégia 1: enviar todo o histórico ao LLM
+  Problema: alto custo, maior latência e risco de limite de contexto.
+
+Estratégia 2: enviar apenas as últimas N mensagens
+  Problema: o agente esquece decisões importantes feitas antes.
+
+Estratégia 3: cada agente monta sua própria memória
+  Problema: perda de padronização, comportamento inconsistente e manutenção difícil.
+```
+
+Com `ConversationSummaryMemory`, o framework passa a seguir uma estratégia padronizada:
+
+```text
+Histórico antigo → resumo incremental
+Histórico recente → mensagens completas
+Prompt do agente → resumo + mensagens recentes + mensagem atual + MCP + RAG + business_context
+```
+
+Assim, o agente mantém continuidade em conversas longas sem transformar o prompt em um dump completo da sessão.
+
+### 29.2. Diferença entre memória, checkpoint e state
+
+É importante não misturar três conceitos diferentes.
+
+| Conceito | Finalidade | Exemplo | Deve ir para o prompt? |
+|---|---|---|---|
+| `state` | Dados transitórios do fluxo LangGraph atual | intent, route, answer parcial, tool results | Apenas campos curados |
+| checkpoint | Retomada técnica do workflow | estado persistido pelo LangGraph | Não diretamente |
+| memória conversacional | Continuidade semântica da conversa | resumo, histórico, mensagens recentes | Sim, de forma resumida |
+
+O checkpoint permite recuperar a execução técnica. A memória conversacional ajuda o LLM a entender o que já foi discutido.
+
+A regra prática é:
+
+```text
+Checkpoint responde: onde o workflow estava?
+State responde: o que está acontecendo neste turno?
+ConversationSummaryMemory responde: o que importa lembrar da conversa anterior?
+```
+
+### 29.3. Onde a `ConversationSummaryMemory` entra no fluxo
+
+A compressão deve entrar antes da montagem do prompt do agente.
+
+Fluxo recomendado:
+
+```text
+Canal / Frontend / API
+  ↓
+POST /gateway/message
+  ↓
+ChannelGateway.normalize()
+  ↓
+IdentityResolver
+  ↓
+SessionRepository
+  ↓
+MemoryRepository carrega histórico bruto
+  ↓
+ConversationSummaryMemory prepara contexto
+  ↓
+AgentWorkflow.ainvoke()
+  ↓
+Agente especializado
+  ↓
+AgentRuntimeMixin.build_messages()
+  ↓
+LLM
+  ↓
+Resposta
+  ↓
+Persistência do turno e atualização do resumo
+```
+
+Em outras palavras, o agente não deve saber como resumir a conversa. O agente deve apenas receber o contexto preparado pelo framework.
+
+### 29.4. Quando a compressão entra em ação
+
+A compressão normalmente é disparada por limite de mensagens ou limite de contexto.
+
+Exemplo por quantidade de mensagens:
+
+```env
+MEMORY_SUMMARY_TRIGGER_MESSAGES=20
+MEMORY_RECENT_MESSAGES_LIMIT=8
+```
+
+Com essa configuração:
+
+```text
+Quando a sessão passa de 20 mensagens:
+  mensagens antigas → resumo
+  últimas 8 mensagens → preservadas completas
+```
+
+Exemplo conceitual:
+
+```text
+M1 até M12  → entram no resumo
+M13 até M20 → continuam completas no prompt
+M21         → mensagem atual do usuário
+```
+
+Em turnos futuros, o framework pode fazer resumo incremental:
+
+```text
+Resumo anterior + novas mensagens antigas → novo resumo atualizado
+Últimas mensagens → mantidas completas
+```
+
+### 29.5. O que deve ser preservado no resumo
+
+Um bom resumo não é uma paráfrase genérica da conversa. Ele deve preservar informações úteis para continuidade operacional.
+
+Para agentes corporativos, preserve:
+
+```text
+objetivo atual do usuário
+canal e sessão relevante
+agente/backend ativo
+decisões de roteamento
+intent atual e intents anteriores relevantes
+business_context resolvido
+identificadores canônicos, preferencialmente mascarados quando sensíveis
+confirmações explícitas do usuário
+ações já executadas
+tools MCP chamadas e evidências principais
+erros operacionais relevantes
+pendências e próximos passos
+restrições de domínio já explicadas
+```
+
+Evite preservar:
+
+```text
+logs enormes
+stack traces completos
+payloads brutos desnecessários
+respostas completas de tools quando um resumo estruturado basta
+dados sensíveis sem necessidade
+conteúdo redundante ou já superado
+```
+
+### 29.6. Arquitetura recomendada no framework
+
+A implementação recomendada separa armazenamento bruto, armazenamento do resumo e montagem do contexto.
+
+```text
+agent_framework/memory/
+├── message_history.py      # memória bruta atual: append/list
+├── summary_store.py        # persistência do resumo por session_id
+├── summary_memory.py       # regra de compressão e preparação de contexto
+└── __init__.py
+```
+
+Responsabilidades:
+
+```text
+ConversationMemory
+  Salva e lista mensagens brutas.
+
+ConversationSummaryStore
+  Salva e recupera o resumo incremental da sessão.
+
+ConversationSummaryMemory
+  Decide quando comprimir, chama o LLM resumidor quando habilitado,
+  preserva mensagens recentes e devolve MemoryContext.
+
+AgentRuntimeMixin.build_messages()
+  Injeta memory_summary e recent_messages no prompt final.
+```
+
+### 29.7. Configuração no `.env`
+
+Inclua estas propriedades no `.env` do backend:
+
+```env
+ENABLE_CONVERSATION_SUMMARY_MEMORY=true
+MEMORY_CONTEXT_STRATEGY=summary
+MEMORY_HISTORY_LIMIT=80
+MEMORY_RECENT_MESSAGES_LIMIT=8
+MEMORY_SUMMARY_TRIGGER_MESSAGES=20
+MEMORY_MAX_SUMMARY_CHARS=6000
+MEMORY_SUMMARY_USE_LLM=true
+MEMORY_INJECT_RECENT_MESSAGES=true
+MEMORY_INJECT_SUMMARY=true
+```
+
+Significado das principais opções:
+
+| Configuração | Função |
+|---|---|
+| `ENABLE_CONVERSATION_SUMMARY_MEMORY` | Liga ou desliga a memória resumida |
+| `MEMORY_CONTEXT_STRATEGY` | Define a estratégia: `none`, `window` ou `summary` |
+| `MEMORY_HISTORY_LIMIT` | Quantidade máxima de mensagens carregadas do histórico bruto |
+| `MEMORY_RECENT_MESSAGES_LIMIT` | Quantidade de mensagens recentes preservadas completas |
+| `MEMORY_SUMMARY_TRIGGER_MESSAGES` | Quantidade de mensagens que dispara compressão |
+| `MEMORY_MAX_SUMMARY_CHARS` | Tamanho máximo aproximado do resumo |
+| `MEMORY_SUMMARY_USE_LLM` | Usa LLM para resumir; se falso, usa fallback determinístico |
+| `MEMORY_INJECT_RECENT_MESSAGES` | Injeta últimas mensagens no prompt |
+| `MEMORY_INJECT_SUMMARY` | Injeta resumo acumulado no prompt |
+
+Para desenvolvimento local, uma configuração segura é:
+
+```env
+ENABLE_CONVERSATION_SUMMARY_MEMORY=true
+MEMORY_CONTEXT_STRATEGY=summary
+MEMORY_REPOSITORY_PROVIDER=memory
+LLM_PROVIDER=mock
+```
+
+Para ambiente persistente:
+
+```env
+ENABLE_CONVERSATION_SUMMARY_MEMORY=true
+MEMORY_CONTEXT_STRATEGY=summary
+MEMORY_REPOSITORY_PROVIDER=autonomous
+ADB_TABLE_PREFIX=AGENTFW
+```
+
+### 29.8. Persistência do resumo
+
+O resumo não deve ser recalculado do zero a cada turno. Ele deve ser persistido por sessão.
+
+Modelo lógico:
+
+```text
+session_id
+summary
+last_message_id_summarized
+message_count_summarized
+metadata_json
+created_at
+updated_at
+```
+
+Exemplos de destino:
+
+```text
+SQLite  → agent_memory_summaries
+Oracle  → <ADB_TABLE_PREFIX>_MEMORY_SUMMARY
+MongoDB → memory_summaries
+Memory  → InMemoryConversationSummaryStore
+```
+
+Essa separação permite:
+
+```text
+replay completo usando histórico bruto
+prompt leve usando resumo
+investigação/auditoria usando ambos
+migração futura para storage corporativo
+```
+
+### 29.9. Atualização do `main.py` do backend
+
+O backend deve inicializar a memória bruta e a memória resumida.
+
+Exemplo:
+
+```python
+from agent_framework.memory.message_history import create_memory
+from agent_framework.memory.summary_memory import create_conversation_summary_memory
+
+memory = create_memory(settings)
+summary_memory = create_conversation_summary_memory(
+    settings=settings,
+    message_history=memory,
+    llm=llm,
+    telemetry=telemetry,
+)
+
+workflow = AgentWorkflow(
+    llm,
+    memory,
+    telemetry,
+    analytics,
+    settings,
+    observer=observer,
+    tool_router=tool_router,
+    summary_memory=summary_memory,
+)
+```
+
+O ponto principal é que `summary_memory` deve ser criado no mesmo nível dos demais motores compartilhados do backend.
+
+### 29.10. Atualização do workflow
+
+O workflow deve receber `summary_memory` e repassar esse recurso para os agentes.
+
+Exemplo:
+
+```python
+class AgentWorkflow:
+    def __init__(
+        self,
+        llm,
+        memory,
+        telemetry,
+        analytics,
+        settings,
+        observer=None,
+        tool_router=None,
+        summary_memory=None,
+    ):
+        self.llm = llm
+        self.memory = memory
+        self.summary_memory = summary_memory
+```
+
+Ao montar `agent_kwargs`:
+
+```python
+agent_kwargs = {
+    "telemetry": telemetry,
+    "tool_router": tool_router,
+    "rag_service": rag_service,
+    "cache": cache,
+    "settings": settings,
+    "observer": observer,
+    "summary_memory": summary_memory,
+}
+```
+
+Assim, todos os agentes recebem a mesma capacidade de memória resumida.
+
+### 29.11. Atualização dos agentes
+
+Agentes que já usam `build_messages()` precisam apenas preparar o contexto de memória antes de montar o prompt:
+
+```python
+await self.prepare_memory_context(state)
+
+messages = self.build_messages(
+    state,
+    system_prompt=system_prompt,
+    mcp_results=mcp_results,
+    rag_context=rag_context,
+    rag_metadata=rag_metadata,
+)
+```
+
+Agentes que montam `messages` manualmente devem ser ajustados para usar `build_messages()` sempre que possível.
+
+Antes:
+
+```python
+messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": f"Mensagem: {user_text}\nMCP: {tool_context}"},
+]
+```
+
+Depois:
+
+```python
+await self.prepare_memory_context(state)
+
+messages = self.build_messages(
+    state,
+    system_prompt=system_prompt,
+    mcp_results=tool_context,
+    rag_context=rag_context,
+    rag_metadata=rag_metadata,
+)
+```
+
+A regra arquitetural é:
+
+```text
+Agente não comprime memória.
+Agente não duplica histórico.
+Agente chama prepare_memory_context().
+Agente usa build_messages().
+Framework injeta resumo, mensagens recentes, MCP, RAG e business_context.
+```
+
+### 29.12. Como o resumo aparece no prompt
+
+O prompt final passa a ter uma estrutura parecida com esta:
+
+```text
+System:
+  Você é um agente corporativo especializado...
+
+User:
+  Resumo da conversa até agora:
+  O usuário está testando o agente de contas no canal web. A sessão já passou por
+  roteamento para billing_agent, houve consulta MCP de fatura e uma falha SSE anterior.
+
+  Últimas mensagens:
+  Usuário: Minha fatura veio alta.
+  Agente: Consultei os dados disponíveis...
+  Usuário: Pode explicar os serviços adicionais?
+
+  Mensagem atual do usuário:
+  Quero contestar esse item.
+
+  Intent e rota escolhidas pelo framework:
+  intent=invoice_dispute route=billing_agent
+
+  Contexto de negócio:
+  customer_key=***9999
+  contract_key=***1180
+
+  Evidências MCP:
+  ...
+
+  Contexto RAG:
+  ...
+```
+
+Esse formato mantém continuidade sem enviar todo o histórico bruto.
+
+### 29.13. Eventos IC/NOC/GRL recomendados
+
+Para rastreabilidade, emita eventos específicos de memória.
+
+| Evento | Quando emitir |
+|---|---|
+| `IC.MEMORY_CONTEXT_LOADED` | Histórico e resumo foram carregados |
+| `IC.MEMORY_COMPRESSION_TRIGGERED` | O limite configurado foi atingido |
+| `IC.MEMORY_SUMMARY_UPDATED` | O resumo incremental foi atualizado |
+| `IC.MEMORY_CONTEXT_INJECTED` | O prompt recebeu resumo/mensagens recentes |
+| `NOC.MEMORY_SUMMARY_FAILED` | A compressão falhou e o framework usou fallback |
+
+Exemplo de payload:
+
+```json
+{
+  "session_id": "default:billing:s1",
+  "messages_total": 42,
+  "messages_summarized": 30,
+  "recent_messages_kept": 8,
+  "summary_chars": 3840,
+  "strategy": "summary"
+}
+```
+
+Esses eventos ajudam a provar que a memória resumida está funcionando de verdade.
+
+### 29.14. Teste funcional mínimo
+
+Depois de subir o backend, execute uma conversa longa usando o mesmo `session_id`.
+
+Exemplo:
+
+```bash
+SESSION_ID="summary-test-001"
+
+for i in $(seq 1 25); do
+  curl -s -X POST http://localhost:8000/gateway/message \
+    -H 'content-type: application/json' \
+    -d "{\"channel\":\"web\",\"payload\":{\"text\":\"Mensagem de teste $i sobre minha fatura alta\",\"session_id\":\"$SESSION_ID\",\"customer_key\":\"11999999999\",\"contract_key\":\"3000131180\"}}" \
+    | jq '.metadata.memory // .memory // .'
+done
+```
+
+Verifique:
+
+```text
+O mesmo session_id foi usado em todos os turnos.
+O histórico bruto continua sendo salvo.
+Após o limite configurado, o resumo foi criado ou atualizado.
+O prompt não contém o histórico completo.
+As últimas mensagens continuam completas.
+Eventos IC.MEMORY_* aparecem na observabilidade, quando habilitada.
+```
+
+### 29.15. Troubleshooting
+
+| Sintoma | Causa provável | Correção |
+|---|---|---|
+| Resumo nunca aparece | `ENABLE_CONVERSATION_SUMMARY_MEMORY=false` | Ativar no `.env` |
+| Resumo não é injetado | `MEMORY_INJECT_SUMMARY=false` ou agente não usa `build_messages()` | Ativar config e refatorar agente |
+| Últimas mensagens não aparecem | `MEMORY_INJECT_RECENT_MESSAGES=false` | Ativar config |
+| Agente esquece decisões antigas | Trigger alto demais ou resumo ruim | Reduzir `MEMORY_SUMMARY_TRIGGER_MESSAGES` e melhorar prompt de resumo |
+| Prompt ficou duplicado | Agente ainda injeta histórico manualmente | Remover histórico manual e usar `build_messages()` |
+| Latência aumentou | Resumo com LLM em todo turno | Usar resumo incremental e só comprimir quando atingir limite |
+| Dados sensíveis aparecem no resumo | Falta política de mascaramento | Mascarar identificadores antes de salvar/injetar |
+
+### 29.16. Critério de aceite
+
+Considere a implementação correta quando:
+
+```text
+[ ] O backend inicializa summary_memory no main.py.
+[ ] O workflow recebe e repassa summary_memory aos agentes.
+[ ] Os agentes chamam prepare_memory_context(state).
+[ ] Os agentes usam build_messages() em vez de montar prompt manual duplicado.
+[ ] O histórico bruto continua persistido.
+[ ] O resumo incremental é persistido por session_id.
+[ ] O prompt contém resumo + últimas mensagens, mas não o histórico inteiro.
+[ ] A compressão só roda quando o limite configurado é atingido.
+[ ] Há fallback quando o resumidor falha.
+[ ] IC/NOC de memória aparecem na observabilidade, quando habilitados.
+```
+
+A `ConversationSummaryMemory` deve ser tratada como uma capacidade do framework, não como uma regra de um agente específico. Dessa forma, todo novo agente herda continuidade conversacional, controle de custo, menor latência e melhor padronização.
+
+---
+## 30. Conclusão
 
 O `agent_template_backend` fornece a espinha dorsal corporativa para novos agentes. A implementação de um agente novo deve se limitar ao domínio: prompts, regras, tools, clients, schemas e decisões específicas.
 
@@ -4124,7 +4655,7 @@ Testar gateway     → valida o fluxo real fim a fim.
 Seguindo esse modelo, novos agentes podem ser criados com padronização, escalabilidade, rastreabilidade e manutenção mais simples.
 
 
-## 30. Entrega final com Agent Gateway
+## 31. Entrega final com Agent Gateway
 
 Ao final da implementação, a entrega recomendada deve conter quatro projetos ou diretórios claramente separados:
 
@@ -4163,7 +4694,7 @@ Framework
   fornece os motores reutilizáveis para gateway e backends
 ```
 
-### 30.1. Sequência final de subida local
+### 31.1. Sequência final de subida local
 
 Uma sequência local completa pode ser:
 
@@ -4189,7 +4720,7 @@ npm install
 npm run dev
 ```
 
-### 30.2. Sequência final de testes
+### 31.2. Sequência final de testes
 
 ```bash
 # Gateway vivo
@@ -4218,7 +4749,7 @@ curl http://localhost:8010/debug/sessions
 curl -N http://localhost:8010/gateway/events/s1
 ```
 
-### 30.3. Critério de aceite arquitetural
+### 31.3. Critério de aceite arquitetural
 
 A implementação está arquiteturalmente correta quando:
 
