@@ -26,7 +26,7 @@ Guardrails → LLM OCI Generative AI → Output Guardrails → Judges
 Memory / RAG / Vector / Graph / Telemetry / Streaming
 ```
 
-![img_1.png](img_1.png)
+![img_1.png](../img_1.png)
 
 ## Quickstart local
 
@@ -44,7 +44,7 @@ http://localhost:3005
 ```
 Crie sua Organização e seu projeto
 
-![img.png](img.png)
+![img.png](../img.png)
 
 Será criado também um MongoDB e um REDIS, logo seu .env terá a configuração para apontar para estes recursos conteinerizados.
 Você pode também apontar para um banco de dados Autonomous Oracle, basta configurar no arquivo .env.
