@@ -499,7 +499,7 @@ The mixin should not contain specific business rules, such as:
 calculate bill dispute
 query an ANATEL protocol directly
 open a Siebel SR directly
-classify TIM cancellation
+classify customer cancellation
 calculate a financial slip amount
 validate a specific retail product
 ```
