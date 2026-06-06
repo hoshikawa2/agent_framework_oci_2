@@ -1818,7 +1818,7 @@ flowchart TD
 ### 6.6. Connect the node to Output Supervisor
 
 ```python
-builder.add_edge("financeiro_agent", "output_supervisor")
+builder.add_edge("billing_agent", "output_supervisor")
 ```
 
 This line is important because the agent response should not go directly to the user. It first passes through output supervisor, output guardrails, judges, supervisor review, and persistence.
