@@ -1736,6 +1736,91 @@ builder.add_conditional_edges(
 
 Essa tabela conecta a decisão do roteador com o nó real do grafo.
 
+Outro exemplo:
+
+
+```python
+    def _build_graph(self):
+        builder = StateGraph(AgentState)
+        builder.add_node("input_guardrails", self._node("input_guardrails", self.input_guardrails))
+        builder.add_node("routing_decision", self._node("routing_decision", self.routing_decision))
+        builder.add_node("billing_agent", self._node("billing_agent", self.billing_agent))
+        builder.add_node("product_agent", self._node("product_agent", self.product_agent))
+        builder.add_node("orders_agent", self._node("orders_agent", self.orders_agent))
+        builder.add_node("support_agent", self._node("support_agent", self.support_agent))
+        builder.add_node("handoff", self._node("handoff", self.handoff))
+        builder.add_node("supervisor_agent", self._node("supervisor_agent", self.supervisor_agent))
+        builder.add_node("output_supervisor", self._node("output_supervisor", self.output_supervisor))
+        builder.add_node("output_guardrails", self._node("output_guardrails", self.output_guardrails))
+        builder.add_node("judge", self._node("judge", self.judge))
+        builder.add_node("supervisor_review", self._node("supervisor_review", self.supervisor_review))
+        builder.add_node("persist", self._node("persist", self.persist))
+
+        builder.add_edge(START, "input_guardrails")
+        builder.add_conditional_edges(
+            "input_guardrails",
+            self._after_input_guardrails,
+            {"blocked": "persist", "continue": "routing_decision"},
+        )
+        builder.add_conditional_edges(
+            "routing_decision",
+            lambda s: s.get("route", "billing_agent"),
+            {
+                "billing_agent": "billing_agent",
+                "product_agent": "product_agent",
+                "orders_agent": "orders_agent",
+                "support_agent": "support_agent",
+                "handoff": "handoff",
+                "supervisor_agent": "supervisor_agent",
+            },
+        )
+        builder.add_edge("billing_agent", "output_supervisor")
+        builder.add_edge("product_agent", "output_supervisor")
+        builder.add_edge("orders_agent", "output_supervisor")
+        builder.add_edge("support_agent", "output_supervisor")
+        builder.add_edge("handoff", "output_supervisor")
+        builder.add_edge("supervisor_agent", "output_supervisor")
+        builder.add_edge("output_supervisor", "output_guardrails")
+        builder.add_edge("output_guardrails", "judge")
+        builder.add_edge("judge", "supervisor_review")
+        builder.add_edge("supervisor_review", "persist")
+        builder.add_edge("persist", END)
+
+        return builder.compile(checkpointer=create_langgraph_checkpointer(self.settings))
+```
+
+```mermaid
+flowchart TD
+
+    START([START]) --> input_guardrails[input_guardrails]
+
+    input_guardrails -->|blocked| persist[persist]
+    input_guardrails -->|continue| routing_decision[routing_decision]
+
+    routing_decision -->|route = billing_agent| billing_agent[billing_agent]
+    routing_decision -->|route = product_agent| product_agent[product_agent]
+    routing_decision -->|route = orders_agent| orders_agent[orders_agent]
+    routing_decision -->|route = support_agent| support_agent[support_agent]
+    routing_decision -->|route = handoff| handoff[handoff]
+    routing_decision -->|route = supervisor_agent| supervisor_agent[supervisor_agent]
+
+    billing_agent --> output_supervisor[output_supervisor]
+    product_agent --> output_supervisor
+    orders_agent --> output_supervisor
+    support_agent --> output_supervisor
+    handoff --> output_supervisor
+    supervisor_agent --> output_supervisor
+
+    output_supervisor --> output_guardrails[output_guardrails]
+    output_guardrails --> judge[judge]
+    judge --> supervisor_review[supervisor_review]
+    supervisor_review --> persist
+    persist --> END([END])
+
+A leitura fica assim:
+```
+
+
 ### 6.6. Conectar o nó ao Output Supervisor
 
 ```python
