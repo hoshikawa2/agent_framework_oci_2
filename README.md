@@ -4560,9 +4560,393 @@ Consider the implementation correct when:
 ```
 
 `ConversationSummaryMemory` should be treated as a framework capability, not as a rule of a specific agent. This way, every new agent inherits conversational continuity, cost control, lower latency, and better standardization.
+---
+
+## 30. Retrieval Augmented Generation (RAG)
+
+### 30.1. What is RAG?
+
+RAG (Retrieval Augmented Generation) is an architecture that allows an agent to consult corporate documents before generating a response.
+
+Without RAG, the LLM responds only based on its training.
+
+text User    ↓ LLM    ↓ Response
+
+With RAG, the agent queries a document base before calling the model.
+
+text User    ↓ Retriever    ↓ Relevant Documents    ↓ LLM    ↓ Grounded Response
+
+The main goal of RAG is to allow the agent to use up-to-date corporate knowledge without requiring model retraining.
 
 ---
-## 30. Conclusion
+
+### 30.2. When to Use RAG
+
+RAG is recommended when the answer depends on document content.
+
+Examples:
+
+- Manuals
+- Procedures
+- Corporate policies
+- Contracts
+- FAQ
+- Technical documentation
+- Catalogs
+- Regulatory standards
+- Knowledge base
+
+Typical questions:
+
+- What is the cancellation policy?
+- Explain the plan regulation.
+- What does the onboarding procedure say?
+- How does the return process work?
+
+---
+
+### 30.3. When NOT to Use RAG
+
+RAG does not replace operational queries.
+
+The cases below should normally use MCP:
+
+- Query invoice
+- Query order
+- Query payment
+- Query inventory
+- Query protocol
+- Update customer registration
+- Open a request
+- Execute an operational action
+
+In these scenarios, the agent needs to query transactional systems, not documents.
+
+---
+
+### 30.4. RAG versus MCP
+
+| Situation | MCP | RAG |
+|---|---:|---:|
+| Query payment | ✅ | ❌ |
+| Query order | ✅ | ❌ |
+| Query ERP | ✅ | ❌ |
+| Product manual | ❌ | ✅ |
+| Internal procedure | ❌ | ✅ |
+| Regulation | ❌ | ✅ |
+| Corporate policy | ❌ | ✅ |
+
+Practical rule:
+
+text Systems  → MCP Documents → RAG
+
+---
+
+### 30.5. Framework RAG Architecture
+
+The framework separates the document retrieval stage from the generation stage.
+
+text Document     ↓ Loader     ↓ Chunking     ↓ Embeddings     ↓ Vector Store     ↓ Retriever     ↓ RagService     ↓ AgentRuntimeMixin     ↓ Agent     ↓ LLM
+
+This separation allows components to be replaced without changing the agent implementation.
+
+---
+
+### 30.6. Framework Components
+
+The framework provides a generic RAG architecture composed of the following elements:
+
+- rag_service
+- retriever
+- embedding_provider
+- vector_store
+- graph_store
+
+Responsibilities:
+
+| Component | Responsibility |
+|---|---|
+| RagService | Orchestrates context retrieval |
+| Retriever | Executes vector search |
+| Embedding Provider | Generates embeddings |
+| Vector Store | Stores vectors |
+| Graph Store | Stores relationships for GraphRAG |
+
+---
+
+### 30.7. Configuration via .env
+
+Example:
+
+env VECTOR_STORE_PROVIDER=faiss GRAPH_STORE_PROVIDER=memory EMBEDDING_PROVIDER=oci RAG_TOP_K=5 RAG_ENABLED=true
+
+Description:
+
+| Variable | Function |
+|---|---|
+| VECTOR_STORE_PROVIDER | Defines the vector database |
+| GRAPH_STORE_PROVIDER | Defines the graph store |
+| EMBEDDING_PROVIDER | Defines the embedding provider |
+| RAG_TOP_K | Number of retrieved documents |
+| RAG_ENABLED | Enables or disables RAG |
+
+---
+
+### 30.8. Indexing Process
+
+The indexing process happens before the agent execution.
+
+text PDF  ↓ Loader  ↓ Chunking  ↓ Embeddings  ↓ Vector Store
+
+During indexing:
+
+1. The document is loaded.
+2. The text is split into chunks.
+3. Embeddings are generated.
+4. The vectors are persisted.
+
+---
+
+### 30.9. Chunking
+
+Chunking is the process of splitting a document.
+
+Example:
+
+python splitter = RecursiveCharacterTextSplitter(     chunk_size=1000,     chunk_overlap=200, )
+
+Parameters:
+
+| Parameter | Function |
+|---|---|
+| chunk_size | Maximum size of the text segment |
+| chunk_overlap | Overlap between chunks |
+
+Trade-off:
+
+text Chunks that are too small ↓ Not enough context  Chunks that are too large ↓ Higher cost and more noise
+
+---
+
+### 30.10. Embeddings
+
+Embeddings transform text into numerical vectors.
+
+OCI example:
+
+python embeddings = OCIGenAIEmbeddings(     model_id="cohere.embed-multilingual-v3.0" )
+
+Common providers:
+
+- OCI Generative AI
+- HuggingFace
+- OpenAI Compatible
+- Sentence Transformers
+
+---
+
+### 30.11. Vector Stores
+
+The framework supports different vector storage options.
+
+#### FAISS
+
+Recommended for:
+
+- Local development
+- POCs
+- Prototypes
+
+#### Oracle Vector Search
+
+Recommended for:
+
+- Production
+- Persistence
+- Scalability
+- Oracle Autonomous Database
+
+#### MongoDB Atlas Vector Search
+
+Recommended for:
+
+- MongoDB environments
+- Cloud-native architectures
+
+---
+
+### 30.12. Retriever
+
+The Retriever executes the vector search.
+
+Example:
+
+python retriever = vector_store.as_retriever(     search_kwargs={         "k": 5     } )
+
+Flow:
+
+text Question  ↓ Question embedding  ↓ Vector search  ↓ Top-K documents
+
+---
+
+### 30.13. RagService
+
+The RagService centralizes context retrieval.
+
+Simplified example:
+
+python class RagService:     async def retrieve(self, query):         docs = self.retriever.invoke(query)         return "\n".join(             doc.page_content             for doc in docs         )
+
+The agent does not access the retriever directly.
+
+It always uses the RagService.
+
+---
+
+### 30.14. Integration with AgentRuntimeMixin
+
+Agents usually use:
+
+python rag_context, rag_metadata = await self._retrieve_rag_context(state)
+
+Internal flow:
+
+text Agent  ↓ AgentRuntimeMixin  ↓ RagService  ↓ Retriever  ↓ Vector Store
+
+The returned result contains:
+
+- rag_context
+- rag_metadata
+
+Where:
+
+| Field | Description |
+|---|---|
+| rag_context | Retrieved textual content |
+| rag_metadata | Debug and audit information |
+
+---
+
+### 30.15. Integrating RAG into the Agent
+
+Example:
+
+python rag_context, rag_metadata = await self._retrieve_rag_context(state)  messages = [     {         "role": "system",         "content": system_prompt,     },     {         "role": "user",         "content": f""" Question: {user_text}  RAG Context: {rag_context} """     } ]
+
+The LLM then responds using documentary evidence.
+
+---
+
+### 30.16. RAG + MCP
+
+The framework allows both approaches to be used simultaneously.
+
+Example:
+
+#### Question
+
+text What is the regulation of my plan?
+
+Flow:
+
+text RAG
+
+#### Question
+
+text What is my account balance?
+
+Flow:
+
+text MCP
+
+#### Question
+
+text Explain the regulation and query my invoice.
+
+Flow:
+
+text RAG + MCP
+
+Architecture:
+
+text User     ↓ Agent     ↓ ┌─────────────┐ │ MCP         │ │ RAG         │ └─────────────┘     ↓ LLM     ↓ Response
+
+---
+
+### 30.17. Oracle Vector Search
+
+In corporate environments, Oracle Vector Search is recommended.
+
+Advantages:
+
+- Persistence
+- High availability
+- Backup
+- Governance
+- Integration with Autonomous Database
+
+Example:
+
+env VECTOR_STORE_PROVIDER=oracle
+
+---
+
+### 30.18. GraphRAG
+
+GraphRAG adds knowledge based on relationships.
+
+Architecture:
+
+text Document  ↓ Entity Extraction  ↓ Graph  ↓ PGQL Query  ↓ Context  ↓ LLM
+
+Use cases:
+
+- Dependency mapping
+- Relationships between products
+- Complex catalogs
+- Technical documentation
+
+---
+
+### 30.19. Observability
+
+Recommended events:
+
+- IC.RAG_QUERY
+- IC.RAG_DOCUMENTS_FOUND
+- IC.RAG_NO_RESULTS
+- IC.RAG_RESPONSE_GROUNDED
+
+Example:
+
+python await self._emit_ic(     "IC.RAG_QUERY",     state,     {"query": user_text}, )
+
+---
+
+### 30.20. Testing RAG
+
+Suggested flow:
+
+1. Load document.
+2. Run indexing.
+3. Start the backend.
+4. Ask a question.
+5. Verify the retrieved context.
+6. Verify the generated response.
+7. Verify observability.
+
+Checklist:
+
+- Did the Retriever find documents?
+- Did Top-K return results?
+- Was the context sent to the LLM?
+- Did the response use evidence?
+- Were the IC events emitted?
+
+If all answers are positive, the RAG implementation is working correctly.
+
+---
+## 31. Conclusion
 
 `agent_template_backend` provides the corporate backbone for new agents. The implementation of a new agent should be limited to the domain: prompts, rules, tools, clients, schemas, and specific decisions.
 
@@ -4595,7 +4979,7 @@ Following this model, new agents can be created with standardization, scalabilit
 
 ---
 
-## 31. Final delivery with Agent Gateway
+## 32. Final delivery with Agent Gateway
 
 At the end of implementation, the recommended delivery should contain four clearly separated projects or directories:
 
@@ -4634,7 +5018,7 @@ Framework
   provides reusable engines for gateway and backends
 ```
 
-### 31.1. Final local startup sequence
+### 32.1. Final local startup sequence
 
 A complete local sequence may be:
 
@@ -4660,7 +5044,7 @@ npm install
 npm run dev
 ```
 
-### 31.2. Final test sequence
+### 32.2. Final test sequence
 
 ```bash
 # Gateway alive
@@ -4689,7 +5073,7 @@ curl http://localhost:8010/debug/sessions
 curl -N http://localhost:8010/gateway/events/s1
 ```
 
-### 31.3. Architectural acceptance criteria
+### 32.3. Architectural acceptance criteria
 
 The implementation is architecturally correct when:
 
