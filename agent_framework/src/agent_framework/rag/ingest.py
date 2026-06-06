@@ -304,15 +304,20 @@ async def ingest_documents(
 
     effective_globs = file_globs or globs
 
-    if vector_store is None:
-        from agent_framework.rag.vector_store import create_vector_store
-
-        vector_store = create_vector_store(settings)
-
     if embedding_provider is None:
         from agent_framework.rag.embedding_provider import create_embedding_provider
-
         embedding_provider = create_embedding_provider(settings)
+
+    if vector_store is None:
+        from agent_framework.rag.vector_store import create_vector_store
+        vector_store = create_vector_store(
+            settings,
+            embedding_provider=embedding_provider,
+            telemetry=None,
+        )
+
+    if getattr(vector_store, "embedding_provider", None) is None:
+        vector_store.embedding_provider = embedding_provider
 
     documents = load_documents(
         docs_dir=docs_dir,
