@@ -7194,4 +7194,4 @@ The implementation is architecturally correct when:
 [ ] the developer can test route before testing real execution.
 ```
 
-With this design, adding a new agent does not require rewriting the frontend or copying logic between backends. The developer creates the specialized backend, registers it in Agent Gateway, and lets the framework handle cross-cutting engines.
+With this design, adding a new agent does not require rewriting the frontend or copying logic between backends. The developer creates the specialized backend, registers it in the Agent Gateway, and lets the framework handle the cross-cutting engines.
