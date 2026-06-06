@@ -1200,7 +1200,7 @@ Uma boa prática é emitir um IC de debug em ambiente não produtivo ou logar um
 
 ### 5.2.4. Recursos avançados agora padronizados pelo framework
 
-Nos primeiros exemplos deste tutorial, o agente usa diretamente métodos simples como `_collect_mcp_context()` e `_invoke_llm_cached()`. Isso é suficiente para agentes simples. Porém, em agentes reais migrados para o framework, como um Backoffice/ANATEL, aparecem necessidades adicionais:
+Nos primeiros exemplos deste tutorial, o agente usa diretamente métodos simples como `_collect_mcp_context()` e `_invoke_llm_cached()`. Isso é suficiente para agentes simples. Porém, em agentes reais migrados para o framework, aparecem necessidades adicionais:
 
 ```text
 normalizar tools por intent;
