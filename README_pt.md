@@ -4781,7 +4781,8 @@ Considere a implementação correta quando:
 [ ] IC/NOC de memória aparecem na observabilidade, quando habilitados.
 ```
 
-A `ConversationSummaryMemory` deve ser tratada como uma capacidade do framework, não como uma regra de um agente específico. Dessa forma, todo novo agente herda continuidade conversacional, controle de custo, menor latência e melhor padronização.
+`ConversationSummaryMemory` deve ser tratada como uma capacidade do framework, não como uma regra de um agente específico. Dessa forma, todo novo agente herda continuidade conversacional, controle de custo, menor latência e melhor padronização.
+
 --- 
 
 ## 30. Retrieval Augmented Generation (RAG)

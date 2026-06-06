@@ -4560,6 +4560,7 @@ Consider the implementation correct when:
 ```
 
 `ConversationSummaryMemory` should be treated as a framework capability, not as a rule of a specific agent. This way, every new agent inherits conversational continuity, cost control, lower latency, and better standardization.
+
 ---
 
 ## 30. Retrieval Augmented Generation (RAG)
