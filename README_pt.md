@@ -1897,6 +1897,32 @@ O wrapper adiciona telemetria ao redor do agente. A lógica de negócio continua
 
 ### 6.8. Adicionar ao modo supervisor
 
+#### O que é o Supervisor
+
+O supervisor normalmente é um nó LangGraph.
+
+Pode ser:
+
+- LLM
+- Router baseado em regras
+- Router YAML
+- Router híbrido
+
+Exemplo:
+
+```python
+def supervisor(state):
+
+    return {
+        "next": "billing_agent"
+    }
+```
+
+Ele não executa o BillingAgent.
+
+Ele apenas decide qual agente deverá executar.
+
+
 No método `supervisor_agent()`, ajuste o mapa de handlers:
 
 ```python

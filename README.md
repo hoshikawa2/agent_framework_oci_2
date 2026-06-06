@@ -1904,6 +1904,32 @@ The wrapper adds telemetry around the agent. Business logic remains inside `Fina
 
 ### 6.8. Add it to supervisor mode
 
+#### What is the Supervisor
+
+The supervisor is usually a LangGraph node.
+
+It can be:
+
+- LLM
+- Rule-based router
+- YAML router
+- Hybrid router
+
+Example:
+
+```python
+def supervisor(state):
+
+    return {
+        "next": "billing_agent"
+    }
+```
+
+It does not execute the BillingAgent.
+
+It only decides which agent should be executed.
+
+
 In the `supervisor_agent()` method, adjust the handler map:
 
 ```python
