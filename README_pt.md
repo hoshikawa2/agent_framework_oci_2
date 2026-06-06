@@ -1212,7 +1212,7 @@ montar messages sem despejar o state inteiro no prompt;
 gerar fallback controlado quando o LLM falha.
 ```
 
-Essas necessidades não são exclusivas do Backoffice. Por isso, a partir desta versão, elas passam a ser tratadas como **capacidades reutilizáveis do framework**, e não como código que cada agente deve copiar.
+A partir desta versão, elas passam a ser tratadas como **capacidades reutilizáveis do framework**, e não como código que cada agente deve copiar.
 
 #### 5.2.4.1. `RuntimeContext`: leitura canônica do state
 
