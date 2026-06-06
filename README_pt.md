@@ -6697,7 +6697,12 @@ Responsabilidades:
 
 Exemplo:
 
-env VECTOR_STORE_PROVIDER=faiss GRAPH_STORE_PROVIDER=memory EMBEDDING_PROVIDER=oci RAG_TOP_K=5 RAG_ENABLED=true
+```env
+VECTOR_STORE_PROVIDER=sqlite
+GRAPH_STORE_PROVIDER=memory
+EMBEDDING_PROVIDER=mock
+RAG_TOP_K=5
+```
 
 Descrição:
 
@@ -6794,7 +6799,7 @@ Indicado para:
 
 ---
 
-### 30.30. Retriever
+### 30.12. Retriever
 
 O Retriever executa a busca vetorial.
 
@@ -6888,7 +6893,18 @@ text RAG + MCP
 
 Arquitetura:
 
-text Usuário     ↓ Agente     ↓ ┌─────────────┐ │ MCP         │ │ RAG         │ └─────────────┘     ↓ LLM     ↓ Resposta
+text Usuário
+    ↓
+  Agente
+    ↓
+┌─────────────┐ 
+│ MCP         │ 
+│ RAG         │ 
+└─────────────┘
+    ↓
+    LLM
+    ↓
+    Resposta
 
 ---
 
@@ -6906,7 +6922,10 @@ Vantagens:
 
 Exemplo:
 
-env VECTOR_STORE_PROVIDER=oracle
+```env
+VECTOR_STORE_PROVIDER=oracle
+EMBEDDING_PROVIDER=oci
+```
 
 ---
 
@@ -6916,7 +6935,17 @@ GraphRAG adiciona conhecimento baseado em relacionamentos.
 
 Arquitetura:
 
-text Documento  ↓ Extração de Entidades  ↓ Grafo  ↓ Consulta PGQL  ↓ Contexto  ↓ LLM
+text Documento
+    ↓
+Extração de Entidades 
+    ↓
+    Grafo
+    ↓
+    Consulta PGQL
+    ↓
+    Contexto
+    ↓
+    LLM
 
 Casos de uso:
 
@@ -6964,6 +6993,283 @@ Checklist:
 
 Se todas as respostas forem positivas, a implementação RAG está funcionando corretamente.
 
+
+### 30.21. Gerador de Embeddings do Projeto
+
+Além da recuperação em tempo de execução, o projeto agora possui um gerador de embeddings para carregar documentos no RAG antes de iniciar os testes do agente.
+
+Arquivo principal:
+
+```text
+scripts/generate_rag_embeddings.py
+```
+
+Componentes internos adicionados ao framework:
+
+```text
+agent_framework/src/agent_framework/rag/embedding_provider.py
+agent_framework/src/agent_framework/rag/ingest.py
+```
+
+Responsabilidades:
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `embedding_provider.py` | Cria o provedor de embeddings `mock` ou `oci` |
+| `ingest.py` | Lê documentos, quebra em chunks, gera metadados e salva no vector store |
+| `generate_rag_embeddings.py` | CLI operacional para indexar documentos do projeto |
+
+Fluxo operacional:
+
+```text
+Documentos em ./docs
+        ↓
+Loader de arquivos
+        ↓
+Chunking
+        ↓
+Embedding Provider
+        ↓
+Vector Store
+        ↓
+RagService.retrieve()
+        ↓
+AgentRuntimeMixin._retrieve_rag_context()
+```
+
+---
+
+### 30.22. Configuração do Gerador de Embeddings
+
+As variáveis principais ficam no `.env`:
+
+```env
+VECTOR_STORE_PROVIDER=sqlite
+GRAPH_STORE_PROVIDER=memory
+RAG_TOP_K=5
+RAG_NAMESPACE=default
+RAG_DOCS_DIR=./docs
+RAG_FILE_GLOBS=*.md,*.txt,*.yaml,*.yml,*.json
+RAG_CHUNK_SIZE=1200
+RAG_CHUNK_OVERLAP=200
+EMBEDDING_PROVIDER=mock
+MOCK_EMBEDDING_DIMENSIONS=384
+OCI_EMBEDDING_MODEL=cohere.embed-multilingual-v3.0
+OCI_EMBEDDING_ENDPOINT=
+```
+
+Descrição:
+
+| Variável | Descrição |
+|---|---|
+| `VECTOR_STORE_PROVIDER` | Define onde os chunks e vetores serão armazenados |
+| `RAG_DOCS_DIR` | Diretório onde os documentos serão lidos |
+| `RAG_NAMESPACE` | Namespace usado para separar bases de conhecimento |
+| `RAG_FILE_GLOBS` | Tipos de arquivos lidos pelo indexador |
+| `RAG_CHUNK_SIZE` | Tamanho máximo de cada chunk |
+| `RAG_CHUNK_OVERLAP` | Sobreposição entre chunks |
+| `EMBEDDING_PROVIDER` | Provedor de embeddings: `mock` ou `oci` |
+| `OCI_EMBEDDING_MODEL` | Modelo de embeddings usado na OCI |
+| `OCI_EMBEDDING_ENDPOINT` | Endpoint opcional para embeddings OCI |
+
+Para desenvolvimento local persistente, use:
+
+```env
+VECTOR_STORE_PROVIDER=sqlite
+EMBEDDING_PROVIDER=mock
+SQLITE_DB_PATH=./data/agent_framework.db
+```
+
+Para produção com Oracle Autonomous Database / Oracle Vector Search, use:
+
+```env
+VECTOR_STORE_PROVIDER=autonomous
+EMBEDDING_PROVIDER=oci
+OCI_COMPARTMENT_ID=ocid1.compartment.oc1..xxxx
+OCI_REGION=sa-saopaulo-1
+OCI_EMBEDDING_MODEL=cohere.embed-multilingual-v3.0
+```
+
+Observação importante:
+
+```text
+VECTOR_STORE_PROVIDER=memory não é recomendado para indexação via script,
+porque o conteúdo fica apenas na memória do processo que executou o script.
+Para testes locais reutilizáveis, prefira VECTOR_STORE_PROVIDER=sqlite.
+```
+
+---
+
+### 30.23. Como Carregar Documentos no RAG
+
+Crie o diretório de documentos:
+
+```bash
+mkdir -p docs
+```
+
+Copie os documentos para esse diretório:
+
+```text
+docs/
+  identity_yaml_chapter_14_1_1_en.md
+  business_context_framework_translated_en.md
+  manual_operacional.md
+```
+
+Execute o gerador:
+
+```bash
+python scripts/generate_rag_embeddings.py \
+  --docs-dir ./docs \
+  --namespace default
+```
+
+Exemplo com ajustes de chunking:
+
+```bash
+python scripts/generate_rag_embeddings.py \
+  --docs-dir ./docs \
+  --namespace telecom_contas \
+  --chunk-size 1200 \
+  --chunk-overlap 200 \
+  --globs "*.md,*.txt,*.yaml"
+```
+
+Saída esperada:
+
+```text
+RAG embedding generation completed
+  namespace:      telecom_contas
+  files read:     3
+  chunks created: 42
+  documents saved:42
+```
+
+---
+
+### 30.24. Como o Script Funciona Internamente
+
+O script executa estas etapas:
+
+```text
+1. Carrega settings a partir do .env
+2. Lê documentos de RAG_DOCS_DIR ou --docs-dir
+3. Filtra arquivos usando RAG_FILE_GLOBS ou --globs
+4. Divide o texto em chunks
+5. Cria metadados por chunk
+6. Gera embeddings usando EMBEDDING_PROVIDER
+7. Salva chunks e vetores no Vector Store configurado
+```
+
+Metadados gravados por chunk:
+
+```json
+{
+  "source": "manual_operacional.md",
+  "file_name": "manual_operacional.md",
+  "path": "/caminho/absoluto/docs/manual_operacional.md",
+  "chunk_index": 1,
+  "chunk_total": 10,
+  "content_sha256": "..."
+}
+```
+
+Esses metadados ajudam em auditoria, debug, rastreabilidade e exibição de fontes.
+
+---
+
+### 30.25. Provedores de Embeddings
+
+O framework agora possui uma fábrica de provedores:
+
+```python
+from agent_framework.rag.embedding_provider import create_embedding_provider
+
+embedding_provider = create_embedding_provider(settings)
+```
+
+Provedores disponíveis:
+
+| Provedor | Uso recomendado |
+|---|---|
+| `mock` | Desenvolvimento local, testes e validação do pipeline |
+| `oci` | Ambientes corporativos e produção |
+
+O provedor `mock` gera vetores determinísticos localmente. Ele não deve ser usado para qualidade semântica real, mas é útil para validar ingestão, persistência e fluxo RAG sem depender de chamadas externas.
+
+O provedor `oci` usa OCI Generative AI para gerar embeddings reais e deve ser usado quando o RAG precisa de busca semântica corporativa.
+
+---
+
+### 30.26. Integração com o Workflow
+
+O workflow do backend agora cria o embedding provider e injeta esse provider no `RagService`:
+
+```python
+from agent_framework.rag.embedding_provider import create_embedding_provider
+from agent_framework.rag.rag_service import RagService
+
+self.embedding_provider = create_embedding_provider(settings)
+self.rag_service = RagService(
+    settings,
+    embedding_provider=self.embedding_provider,
+    telemetry=telemetry,
+)
+```
+
+Com isso, a recuperação em tempo de execução usa o mesmo provedor configurado na indexação.
+
+Fluxo em tempo de pergunta:
+
+```text
+Usuário faz pergunta
+        ↓
+AgentRuntimeMixin._retrieve_rag_context(state)
+        ↓
+RagService.retrieve(query, namespace)
+        ↓
+Embedding da pergunta
+        ↓
+Busca vetorial
+        ↓
+Top-K chunks
+        ↓
+Contexto RAG no prompt
+        ↓
+LLM responde fundamentado
+```
+
+---
+
+### 30.27. Checklist de Validação do Gerador
+
+Após executar o script, valide:
+
+- O diretório `docs/` contém os arquivos esperados.
+- O `.env` usa `VECTOR_STORE_PROVIDER=sqlite` ou `autonomous`.
+- O namespace usado no script é o mesmo namespace usado pelo agente.
+- O script informou `chunks created` maior que zero.
+- O banco SQLite ou Oracle recebeu registros em `rag_documents` ou `AGENTFW_RAG_DOCUMENT`.
+- O agente chama `_retrieve_rag_context(state)`.
+- O retorno do agente inclui `rag_metadata.document_count` maior que zero quando a pergunta encontra contexto.
+
+Consulta rápida no SQLite:
+
+```bash
+sqlite3 ./data/agent_framework.db \
+  "select namespace, count(*) from rag_documents group by namespace;"
+```
+
+Consulta rápida no Oracle:
+
+```sql
+select namespace, count(*)
+from AGENTFW_RAG_DOCUMENT
+group by namespace;
+```
+
+---
 ---
 ## 31. Conclusão
 

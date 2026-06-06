@@ -19,6 +19,7 @@ from app.agents.orders_agent import OrdersAgent
 from app.agents.support_agent import SupportAgent
 from app.state import AgentState
 from agent_framework.rag.rag_service import RagService
+from agent_framework.rag.embedding_provider import create_embedding_provider
 from agent_framework.cache.cache import create_cache
 
 
@@ -112,7 +113,8 @@ class AgentWorkflow:
         self.judge_telemetry = JudgeTelemetry(telemetry)
         self.langgraph_telemetry = LangGraphDeepTelemetry(telemetry)
         self.cache = create_cache(settings)
-        self.rag_service = RagService(settings, telemetry=telemetry)
+        self.embedding_provider = create_embedding_provider(settings)
+        self.rag_service = RagService(settings, embedding_provider=self.embedding_provider, telemetry=telemetry)
         self.router = EnterpriseRouter(settings, llm=llm, telemetry=telemetry)
         agent_kwargs = {"telemetry": telemetry, "tool_router": getattr(self, "tool_router", None), "rag_service": self.rag_service, "cache": self.cache, "settings": settings, "observer": self.observer, "memory": memory, "summary_memory": summary_memory}
         self.billing = BillingAgent(llm, **agent_kwargs)

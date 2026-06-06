@@ -50,19 +50,64 @@ class InMemoryVectorStore(VectorStore):
 
 
 class SQLiteVectorStore(VectorStore):
-    def __init__(self, settings): self.store=SQLiteStore(settings.SQLITE_DB_PATH)
+    def __init__(self, settings, embedding_provider=None, telemetry=None):
+        self.store=SQLiteStore(settings.SQLITE_DB_PATH)
+        self.embedding_provider=embedding_provider
+        self.telemetry=telemetry
+
+    async def _embed(self, text: str):
+        if not self.embedding_provider:
+            return None
+        start=time.time()
+        if hasattr(self.embedding_provider, "aembed_query"):
+            emb = await self.embedding_provider.aembed_query(text)
+        elif hasattr(self.embedding_provider, "embed_query"):
+            maybe = self.embedding_provider.embed_query(text)
+            emb = await maybe if asyncio.iscoroutine(maybe) else maybe
+        else:
+            emb = None
+        if self.telemetry:
+            await self.telemetry.rag_event("embedding.completed", text[:256], 1 if emb else 0, {"latency_ms": int((time.time()-start)*1000), "dimensions": len(emb or [])})
+        return emb
+
     async def add_texts(self, texts, metadatas=None, namespace="default"):
         metadatas=metadatas or [{} for _ in texts]; ids=[]
         with self.store._lock, self.store.connect() as con:
             for text, meta in zip(texts, metadatas):
                 did=str(uuid.uuid4()); ids.append(did)
-                con.execute("insert into rag_documents(id, namespace, content, metadata_json, created_at) values(?,?,?,?,?)", (did, namespace, text, _json_dumps(meta), self.store.now()))
+                emb=await self._embed(text)
+                con.execute(
+                    "insert into rag_documents(id, namespace, content, embedding_json, metadata_json, created_at) values(?,?,?,?,?,?)",
+                    (did, namespace, text, json.dumps(emb) if emb is not None else None, _json_dumps(meta), self.store.now())
+                )
         return ids
+
     async def similarity_search(self, query, k=5, namespace="default"):
+        query_emb=await self._embed(query)
         with self.store._lock, self.store.connect() as con:
             rows=con.execute("select * from rag_documents where namespace=?", (namespace,)).fetchall()
-        docs=[VectorDocument(id=r["id"], content=r["content"], metadata=_json_loads(r["metadata_json"], {}), score=_score(query, r["content"])) for r in rows]
+        docs=[]
+        for r in rows:
+            content=r["content"]
+            emb=_json_loads(r["embedding_json"] if "embedding_json" in r.keys() else None, None)
+            if query_emb is not None and emb:
+                score=_cosine(query_emb, emb)
+            else:
+                score=_score(query, content)
+            docs.append(VectorDocument(id=r["id"], content=content, metadata=_json_loads(r["metadata_json"], {}), score=score))
         return sorted(docs, key=lambda x: x.score, reverse=True)[:k]
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b:
+        return 0.0
+    n=min(len(a), len(b))
+    dot=sum(float(a[i])*float(b[i]) for i in range(n))
+    na=math.sqrt(sum(float(x)*float(x) for x in a[:n]))
+    nb=math.sqrt(sum(float(x)*float(x) for x in b[:n]))
+    if not na or not nb:
+        return 0.0
+    return dot/(na*nb)
 
 
 class OracleVectorStore(VectorStore):
@@ -85,10 +130,11 @@ class OracleVectorStore(VectorStore):
     async def _embed(self, text: str):
         if not self.embedding_provider: return None
         start=time.time()
-        if hasattr(self.embedding_provider, "embed_query"):
-            emb = await self.embedding_provider.embed_query(text)
-        elif hasattr(self.embedding_provider, "aembed_query"):
+        if hasattr(self.embedding_provider, "aembed_query"):
             emb = await self.embedding_provider.aembed_query(text)
+        elif hasattr(self.embedding_provider, "embed_query"):
+            maybe = self.embedding_provider.embed_query(text)
+            emb = await maybe if asyncio.iscoroutine(maybe) else maybe
         else:
             emb = None
         if self.telemetry:
@@ -151,6 +197,6 @@ AutonomousVectorStore=OracleVectorStore
 
 def create_vector_store(settings, embedding_provider=None, telemetry=None):
     provider=getattr(settings, "VECTOR_STORE_PROVIDER", "memory")
-    if provider == "sqlite": return SQLiteVectorStore(settings)
+    if provider == "sqlite": return SQLiteVectorStore(settings, embedding_provider=embedding_provider, telemetry=telemetry)
     if provider in {"autonomous", "oracle"}: return OracleVectorStore(settings, embedding_provider=embedding_provider, telemetry=telemetry)
     return InMemoryVectorStore()
