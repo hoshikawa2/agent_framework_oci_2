@@ -1825,7 +1825,69 @@ This line is important because the agent response should not go directly to the 
 
 ### 6.7. Create the wrapper method
 
+#### What is a Wrapper
+
+LangGraph requires nodes in the following format:
+
+```python
+def node(state):
+    return {}
+
 In the `AgentWorkflow` class:
+
+```python
+async def financeiro_agent(self, state):
+    async with self.langgraph_telemetry.node("financeiro_agent", state):
+        async with self.telemetry.span(
+            "workflow.agent.financeiro",
+            session_id=state.get("conversation_key") or state.get("session_id"),
+            input={"intent": state.get("intent")},
+        ):
+            return await self.financeiro.run(state)
+```
+
+But real agents usually have:
+
+```python
+agent.execute(...)
+```
+
+The wrapper performs the adaptation.
+
+```python
+def billing_wrapper(state):
+
+    response = billing_agent.execute(
+        state["messages"]
+    )
+
+    return {
+        "messages": [response]
+    }
+```
+
+#### Internal Wrapper Flow
+
+```text
+LangGraph
+    │
+    ▼
+BillingWrapper
+    │
+    ▼
+BillingAgent.execute()
+    │
+    ▼
+MCP Router
+    │
+    ▼
+MCP Server
+    │
+    ▼
+OCI GenAI
+```
+
+On `AgentWorkflow` class:
 
 ```python
 async def financeiro_agent(self, state):

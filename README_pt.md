@@ -1828,6 +1828,58 @@ Essa linha é importante porque a resposta do agente não deve ir direto ao usu�
 
 ### 6.7. Criar o método wrapper
 
+#### O que é um Wrapper?
+
+O LangGraph exige nós no formato:
+
+```python
+def node(state):
+    return {}
+```
+
+Mas os agentes reais normalmente possuem:
+
+```python
+agent.execute(...)
+```
+
+O wrapper faz a adaptação.
+
+```python
+def billing_wrapper(state):
+
+    resposta = billing_agent.execute(
+        state["messages"]
+    )
+
+    return {
+        "messages": [resposta]
+    }
+```
+
+---
+
+#### Fluxo Interno do Wrapper
+
+```text
+LangGraph
+    │
+    ▼
+BillingWrapper
+    │
+    ▼
+BillingAgent.execute()
+    │
+    ▼
+MCP Router
+    │
+    ▼
+MCP Server
+    │
+    ▼
+OCI GenAI
+```
+
 Na classe `AgentWorkflow`:
 
 ```python
