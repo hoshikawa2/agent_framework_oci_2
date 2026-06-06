@@ -2766,16 +2766,17 @@ Inside `agent_template_backend`:
 
 ```bash
 source .venv/bin/activate
+cd agent_template_backend
 pip install -e ../agent_framework
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 Windows PowerShell:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### 17.3. Immediate validations
@@ -2835,7 +2836,7 @@ Example:
 ```bash
 cd ../mcp_servers/financeiro_mcp_server
 source .venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8300 --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 8300 --reload
 ```
 
 Then confirm that the endpoint configured in `config/mcp_servers.yaml` is correct:
@@ -3678,7 +3679,7 @@ ENABLE_OTEL=false
 Run:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
 Validate:
@@ -3698,11 +3699,11 @@ Example:
 ```bash
 # Contas backend
 cd agent_contas_backend
-uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 # Offers backend
 cd agent_ofertas_backend
-uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
 ```
 
 Then update `agent_gateway/config/backends.yaml` with the corresponding ports.
@@ -4640,18 +4641,18 @@ A complete local sequence may be:
 ```bash
 # 1. Start the agent MCP, if it exists
 cd mcp_servers/meu_agente_mcp
-uvicorn app.main:app --host 0.0.0.0 --port 9001 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 9001 --reload
 
 # 2. Start the Contas agent backend
 cd agent_template_backend
 cp .env.example .env
-uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 # 3. Start Agent Gateway
 cd agent_gateway
 cp .env.example .env
 export PYTHONPATH=../agent_framework/src:.
-uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 
 # 4. Start frontend
 cd agent_frontend

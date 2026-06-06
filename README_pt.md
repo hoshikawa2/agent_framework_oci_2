@@ -2759,16 +2759,17 @@ Dentro de `agent_template_backend`:
 
 ```bash
 source .venv/bin/activate
+cd agent_template_backend
 pip install -e ../agent_framework
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 Windows PowerShell:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### 17.3. Validações imediatas
@@ -2828,7 +2829,7 @@ Exemplo:
 ```bash
 cd ../mcp_servers/financeiro_mcp_server
 source .venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8300 --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 8300 --reload
 ```
 
 Depois confirme que o endpoint configurado em `config/mcp_servers.yaml` está correto:
@@ -3863,7 +3864,7 @@ export PYTHONPATH=../agent_framework/src:.
 Suba o serviço:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
 Valide o health:
@@ -4861,18 +4862,18 @@ Uma sequência local completa pode ser:
 ```bash
 # 1. Subir MCP do agente, se existir
 cd mcp_servers/meu_agente_mcp
-uvicorn app.main:app --host 0.0.0.0 --port 9001 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 9001 --reload
 
 # 2. Subir backend do agente Contas
 cd agent_template_backend
 cp .env.example .env
-uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 # 3. Subir Agent Gateway
 cd agent_gateway
 cp .env.example .env
 export PYTHONPATH=../agent_framework/src:.
-uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 
 # 4. Subir frontend
 cd agent_frontend
