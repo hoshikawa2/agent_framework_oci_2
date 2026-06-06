@@ -2482,6 +2482,972 @@ Where can I extract session_key from?
 Which keys are mandatory?
 ```
 
+## 14.1.1. Identity Resolver and `identity.yaml`
+
+The `identity.yaml` file defines how the framework identifies the main business parameters received from input channels.
+
+It is responsible for transforming names that are specific to each channel, frontend, or business domain into canonical names used internally by the framework.
+
+In other words, `identity.yaml` answers the question:
+
+> When the channel sends a parameter called `msisdn`, `cpf`, `customer_id`, `invoice_id`, or `ura_call_id`, what does that mean inside the framework?
+
+The result of this interpretation is used to build the `BusinessContext`.
+
+---
+
+## 14.1.2. Why `identity.yaml` exists
+
+Each channel or domain may use different names to represent the same information.
+
+| Business concept | Telecom | Banking | Retail | Framework |
+|---|---|---|---|---|
+| Customer | `msisdn` | `cpf` | `customer_id` | `customer_key` |
+| Contract / Account / Order | `invoice_id` | `account_id` | `order_id` | `contract_key` |
+| Interaction | `ura_call_id` | `protocol` | `ticket_id` | `interaction_key` |
+| Session | `session_id` | `session_id` | `session_id` | `session_key` |
+
+Without `identity.yaml`, the framework code would need to know all these names directly.
+
+Bad example:
+
+```python
+customer_key = (
+    request.get("msisdn")
+    or request.get("cpf")
+    or request.get("customer_id")
+)
+
+contract_key = (
+    request.get("invoice_id")
+    or request.get("account_id")
+    or request.get("order_id")
+)
+```
+
+This type of scattered logic makes the framework hard to maintain, hard to scale, and tightly coupled to specific domains.
+
+With `identity.yaml`, this rule becomes centralized and configurable.
+
+---
+
+## 14.1.3. Role of `identity.yaml` in the flow
+
+`identity.yaml` acts right at the framework entry point, before the `BusinessContext` is created.
+
+Simplified flow:
+
+```text
+Frontend / Channel
+        ↓
+Raw parameters
+        ↓
+identity.yaml
+        ↓
+Identity Resolver
+        ↓
+BusinessContext
+        ↓
+LangGraph / Agent Runtime
+        ↓
+MCP Tool Router
+```
+
+Example:
+
+```text
+Frontend input:
+
+msisdn=11999999999
+invoice_id=3000131180
+ura_call_id=301953872
+
+        ↓ identity.yaml
+
+BusinessContext:
+
+customer_key=11999999999
+contract_key=3000131180
+interaction_key=301953872
+```
+
+---
+
+## 14.1.4. Example of `identity.yaml`
+
+```yaml
+identity:
+  aliases:
+    customer_key:
+      - customer_key
+      - customer_id
+      - client_id
+      - cpf
+      - cnpj
+      - msisdn
+      - phone_number
+      - document_number
+
+    contract_key:
+      - contract_key
+      - contract_id
+      - invoice_id
+      - account_id
+      - order_id
+      - plan_id
+      - subscription_id
+
+    interaction_key:
+      - interaction_key
+      - interaction_id
+      - protocol
+      - protocol_id
+      - ticket_id
+      - ura_call_id
+      - message_id
+      - call_id
+
+    account_key:
+      - account_key
+      - billing_account
+      - billing_account_id
+      - financial_account_id
+
+    resource_key:
+      - resource_key
+      - resource_id
+      - product_id
+      - service_id
+      - asset_id
+
+    session_key:
+      - session_key
+      - session_id
+      - conversation_id
+      - thread_id
+```
+
+---
+
+## 14.1.5. Canonical framework fields
+
+The goal of `identity.yaml` is to populate the canonical fields used by `BusinessContext`.
+
+### 14.1.5.1. `customer_key`
+
+Represents the main customer in the interaction.
+
+It may come from:
+
+```text
+msisdn
+cpf
+cnpj
+customer_id
+client_id
+phone_number
+```
+
+Example:
+
+```yaml
+customer_key:
+  - msisdn
+  - cpf
+  - customer_id
+```
+
+Input:
+
+```json
+{
+  "msisdn": "11999999999"
+}
+```
+
+Internal result:
+
+```json
+{
+  "customer_key": "11999999999"
+}
+```
+
+---
+
+### 14.1.5.2. `contract_key`
+
+Represents the contract, invoice, order, plan, or commercial resource associated with the interaction.
+
+It may come from:
+
+```text
+invoice_id
+contract_id
+account_id
+order_id
+plan_id
+subscription_id
+```
+
+Example:
+
+```yaml
+contract_key:
+  - invoice_id
+  - contract_id
+  - order_id
+```
+
+Input:
+
+```json
+{
+  "invoice_id": "3000131180"
+}
+```
+
+Internal result:
+
+```json
+{
+  "contract_key": "3000131180"
+}
+```
+
+---
+
+### 14.1.5.3. `interaction_key`
+
+Represents the support interaction, protocol, ticket, call, or message.
+
+It may come from:
+
+```text
+ura_call_id
+protocol
+ticket_id
+message_id
+call_id
+interaction_id
+```
+
+Example:
+
+```yaml
+interaction_key:
+  - ura_call_id
+  - protocol
+  - ticket_id
+```
+
+Input:
+
+```json
+{
+  "ura_call_id": "301953872"
+}
+```
+
+Internal result:
+
+```json
+{
+  "interaction_key": "301953872"
+}
+```
+
+---
+
+### 14.1.5.4. `account_key`
+
+Represents a financial account, billing account, or accounting grouping key.
+
+It may come from:
+
+```text
+billing_account
+billing_account_id
+financial_account_id
+account_key
+```
+
+Example:
+
+```yaml
+account_key:
+  - billing_account
+  - billing_account_id
+```
+
+Input:
+
+```json
+{
+  "billing_account_id": "BA-10001"
+}
+```
+
+Internal result:
+
+```json
+{
+  "account_key": "BA-10001"
+}
+```
+
+---
+
+### 14.1.5.5. `resource_key`
+
+Represents a technical resource, product, service, asset, or specific item.
+
+It may come from:
+
+```text
+resource_id
+product_id
+service_id
+asset_id
+```
+
+Example:
+
+```yaml
+resource_key:
+  - product_id
+  - service_id
+```
+
+Input:
+
+```json
+{
+  "product_id": "VAS-001"
+}
+```
+
+Internal result:
+
+```json
+{
+  "resource_key": "VAS-001"
+}
+```
+
+---
+
+### 14.1.5.6. `session_key`
+
+Represents the conversational session.
+
+It may come from:
+
+```text
+session_id
+conversation_id
+thread_id
+session_key
+```
+
+Example:
+
+```yaml
+session_key:
+  - session_id
+  - conversation_id
+```
+
+Input:
+
+```json
+{
+  "session_id": "default:telecom_contas:abc-123"
+}
+```
+
+Internal result:
+
+```json
+{
+  "session_key": "default:telecom_contas:abc-123"
+}
+```
+
+---
+
+## 14.1.6. Complete input and output example
+
+Input received by the gateway:
+
+```json
+{
+  "channel": "web",
+  "agent": "telecom_contas",
+  "message": "I want to check my invoice",
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872",
+  "use_mock": true
+}
+```
+
+After applying `identity.yaml`, the framework builds the following `BusinessContext`:
+
+```json
+{
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872",
+  "account_key": null,
+  "resource_key": null,
+  "session_key": "default:telecom_contas:abc-123",
+  "metadata": {
+    "channel": "web",
+    "agent": "telecom_contas",
+    "use_mock": true
+  }
+}
+```
+
+---
+
+## 14.1.7. Flow with Mermaid
+
+```mermaid
+flowchart TD
+
+    A[Frontend / Channel] --> B[Request with raw parameters]
+
+    B --> C[Channel Gateway]
+
+    C --> D[Identity Resolver]
+
+    D --> E[Loads identity.yaml]
+
+    E --> F{Alias found?}
+
+    F -->|msisdn| G[customer_key]
+    F -->|cpf| G
+    F -->|customer_id| G
+
+    F -->|invoice_id| H[contract_key]
+    F -->|contract_id| H
+    F -->|order_id| H
+
+    F -->|ura_call_id| I[interaction_key]
+    F -->|protocol| I
+    F -->|ticket_id| I
+
+    F -->|session_id| J[session_key]
+
+    G --> K[BusinessContext]
+    H --> K
+    I --> K
+    J --> K
+
+    K --> L[LangGraph State]
+    L --> M[Agent Runtime]
+```
+
+---
+
+## 14.1.8. Sequence flow
+
+```mermaid
+sequenceDiagram
+    participant FE as Frontend
+    participant GW as Channel Gateway
+    participant IR as Identity Resolver
+    participant YAML as identity.yaml
+    participant BC as BusinessContext
+    participant LG as LangGraph
+
+    FE->>GW: Sends message + msisdn + invoice_id + ura_call_id
+    GW->>IR: Requests identity normalization
+    IR->>YAML: Loads configured aliases
+    YAML-->>IR: customer_key, contract_key, interaction_key
+    IR->>BC: Builds BusinessContext
+    BC->>LG: Injects business_context into state
+```
+
+---
+
+## 14.1.9. How `identity.yaml` relates to `BusinessContext`
+
+`identity.yaml` is not the `BusinessContext`.
+
+It is the configuration used to create the `BusinessContext`.
+
+```text
+identity.yaml
+    ↓
+Defines aliases and identification rules
+    ↓
+Identity Resolver
+    ↓
+Creates BusinessContext
+```
+
+Example:
+
+```yaml
+customer_key:
+  - msisdn
+  - cpf
+  - customer_id
+```
+
+Means:
+
+```text
+If msisdn, cpf, or customer_id arrives,
+use the value found to populate customer_key.
+```
+
+---
+
+## 14.1.10. How `identity.yaml` differs from `mcp_parameter_mapping.yaml`
+
+Both files map names, but they work on opposite sides of the flow.
+
+| File | Moment | Function |
+|---|---|---|
+| `identity.yaml` | Framework input | Translates external parameters into internal names |
+| `mcp_parameter_mapping.yaml` | Tool output | Translates internal names into tool parameters |
+
+Complete flow:
+
+```text
+Channel input
+msisdn, invoice_id, ura_call_id
+        ↓
+identity.yaml
+        ↓
+BusinessContext
+customer_key, contract_key, interaction_key
+        ↓
+mcp_parameter_mapping.yaml
+        ↓
+MCP Tool
+msisdn, invoice_id, ura_call_id
+```
+
+`identity.yaml` looks at the input.
+
+`mcp_parameter_mapping.yaml` looks at the output.
+
+---
+
+## 14.1.11. Practical example in the TIM Accounts domain
+
+Input:
+
+```json
+{
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872"
+}
+```
+
+Configuration in `identity.yaml`:
+
+```yaml
+identity:
+  aliases:
+    customer_key:
+      - msisdn
+
+    contract_key:
+      - invoice_id
+
+    interaction_key:
+      - ura_call_id
+```
+
+Internal result:
+
+```json
+{
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872"
+}
+```
+
+After that, the agent can work only with canonical names.
+
+```python
+customer = business_context.customer_key
+contract = business_context.contract_key
+interaction = business_context.interaction_key
+```
+
+It does not need to know that, in the TIM domain, the customer is represented by `msisdn`.
+
+---
+
+## 14.1.12. Practical example with another domain
+
+Imagine a retail agent.
+
+Input:
+
+```json
+{
+  "customer_id": "C100",
+  "order_id": "ORD900",
+  "ticket_id": "T555"
+}
+```
+
+The same `identity.yaml` may contain:
+
+```yaml
+identity:
+  aliases:
+    customer_key:
+      - msisdn
+      - cpf
+      - customer_id
+
+    contract_key:
+      - invoice_id
+      - contract_id
+      - order_id
+
+    interaction_key:
+      - ura_call_id
+      - protocol
+      - ticket_id
+```
+
+Internal result:
+
+```json
+{
+  "customer_key": "C100",
+  "contract_key": "ORD900",
+  "interaction_key": "T555"
+}
+```
+
+The framework continues to work the same way.
+
+Only the source channel or domain changes.
+
+---
+
+## 14.1.13. Benefits of `identity.yaml`
+
+Using `identity.yaml` provides several important benefits.
+
+### 14.1.13.1. Standardization
+
+All agents start receiving the same internal fields:
+
+```text
+customer_key
+contract_key
+interaction_key
+account_key
+resource_key
+session_key
+```
+
+### 14.1.13.2. Low coupling
+
+The agent does not need to know whether the customer arrived as:
+
+```text
+msisdn
+cpf
+cnpj
+customer_id
+phone_number
+```
+
+It always uses:
+
+```text
+customer_key
+```
+
+### 14.1.13.3. Support for multiple channels
+
+The same backend can receive data from:
+
+```text
+Web
+WhatsApp
+IVR
+Voice
+External API
+Batch
+```
+
+Each channel may have its own names, but the framework normalizes everything.
+
+### 14.1.13.4. Support for multiple domains
+
+The same framework can support:
+
+```text
+Telecom
+Retail
+Banking
+Healthcare
+Insurance
+Backoffice
+```
+
+Without changing the agent core.
+
+### 14.1.13.5. Evolution without code changes
+
+If a new channel starts sending `phone_number` instead of `msisdn`, you only need to add the alias:
+
+```yaml
+customer_key:
+  - msisdn
+  - phone_number
+```
+
+There is no need to change the agent code.
+
+---
+
+## 14.1.14. Recommended rules for `identity.yaml`
+
+### 14.1.14.1. Always map to canonical names
+
+Avoid creating very specific internal fields, such as:
+
+```yaml
+msisdn_key:
+  - msisdn
+```
+
+Prefer:
+
+```yaml
+customer_key:
+  - msisdn
+```
+
+Because `customer_key` works for any domain.
+
+---
+
+### 14.1.14.2. Do not put tool names in `identity.yaml`
+
+Avoid this:
+
+```yaml
+consultar_fatura:
+  msisdn: customer_key
+```
+
+This type of configuration belongs in `mcp_parameter_mapping.yaml`.
+
+`identity.yaml` should only handle input identity.
+
+---
+
+### 14.1.14.3. Keep aliases generic and reusable
+
+Good example:
+
+```yaml
+customer_key:
+  - msisdn
+  - cpf
+  - customer_id
+  - client_id
+```
+
+Less recommended example:
+
+```yaml
+customer_key:
+  - tim_msisdn
+  - banco_cpf
+  - retail_customer_id
+```
+
+Unless the channel really sends these specific names.
+
+---
+
+### 14.1.14.4. Alias priority
+
+When multiple aliases appear in the same request, the framework should use a priority rule.
+
+Example:
+
+```yaml
+customer_key:
+  - customer_key
+  - customer_id
+  - msisdn
+  - cpf
+```
+
+If the input contains:
+
+```json
+{
+  "customer_key": "C999",
+  "msisdn": "11999999999"
+}
+```
+
+The recommendation is to prioritize the first alias in the list:
+
+```json
+{
+  "customer_key": "C999"
+}
+```
+
+This way, fields that are already canonical take priority over external aliases.
+
+---
+
+## 14.1.15. Conceptual implementation of the resolver
+
+Simplified example:
+
+```python
+def resolve_identity(payload: dict, identity_config: dict) -> dict:
+    aliases = identity_config.get("identity", {}).get("aliases", {})
+
+    resolved = {}
+
+    for canonical_field, possible_names in aliases.items():
+        for name in possible_names:
+            if name in payload and payload[name] not in (None, ""):
+                resolved[canonical_field] = payload[name]
+                break
+
+    return resolved
+```
+
+Usage:
+
+```python
+payload = {
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872"
+}
+
+identity_config = {
+    "identity": {
+        "aliases": {
+            "customer_key": ["customer_key", "msisdn", "cpf"],
+            "contract_key": ["contract_key", "invoice_id"],
+            "interaction_key": ["interaction_key", "ura_call_id"]
+        }
+    }
+}
+
+resolved = resolve_identity(payload, identity_config)
+
+print(resolved)
+```
+
+Result:
+
+```json
+{
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872"
+}
+```
+
+---
+
+## 14.1.16. Example of building the `BusinessContext`
+
+After identity is resolved, the framework can build the `BusinessContext`.
+
+```python
+business_context = BusinessContext(
+    customer_key=resolved.get("customer_key"),
+    contract_key=resolved.get("contract_key"),
+    interaction_key=resolved.get("interaction_key"),
+    account_key=resolved.get("account_key"),
+    resource_key=resolved.get("resource_key"),
+    session_key=resolved.get("session_key") or generated_session_id,
+    metadata={
+        "channel": payload.get("channel"),
+        "agent": payload.get("agent"),
+        "use_mock": payload.get("use_mock")
+    }
+)
+```
+
+This object then accompanies the conversation inside the workflow state.
+
+---
+
+## 14.1.17. Expected result inside the state
+
+After normalization, the LangGraph state may contain:
+
+```json
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "I want to check my invoice"
+    }
+  ],
+  "business_context": {
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "account_key": null,
+    "resource_key": null,
+    "session_key": "default:telecom_contas:abc-123",
+    "metadata": {
+      "channel": "web",
+      "agent": "telecom_contas",
+      "use_mock": true
+    }
+  }
+}
+```
+
+This state enables the next framework components to make decisions without depending directly on input names.
+
+---
+
+## 14.1.18. Conclusion
+
+`identity.yaml` is a fundamental part of the framework architecture because it separates business identity from the technical names received by channels.
+
+It allows the framework to receive different parameters from multiple channels and domains, while normalizing everything into a single internal contract: the `BusinessContext`.
+
+In summary:
+
+```text
+identity.yaml
+    ↓
+Interprets input parameters
+    ↓
+Normalizes external names
+    ↓
+Populates the BusinessContext
+    ↓
+Allows agents, workflows, and tools to work in a standardized way
+```
+
+Therefore, `identity.yaml` is the framework input translation layer.
+
 ### 14.2. Example
 
 Edit:
@@ -2545,6 +3511,837 @@ identity:
 Use the minimum required. Do not make everything mandatory. For a generic question, perhaps only `session_key` is enough. To query a financial title, maybe `customer_key` and `contract_key` are mandatory.
 
 The resolved identity appears in `business_context` inside the `state` and is used by the `MCP Tool Router`.
+
+### 14.3.1. BusinessContext
+
+`BusinessContext` is the standardized corporate envelope that carries the business identity of the conversation all the way to the tools.
+
+It allows the framework to receive parameters from different channels, normalize those parameters into standardized internal names, and then convert those names again into the format expected by each MCP Server or tool.
+
+In other words:
+
+```text
+Channel / Frontend
+    sends domain-specific names
+        ↓
+Framework
+    converts them to canonical names
+        ↓
+Agent Runtime / Tool Router
+    uses the standardized context
+        ↓
+MCP Parameter Mapper
+    converts them to the names expected by the tool
+        ↓
+MCP Server / Real tool
+```
+
+---
+
+### 14.3.2. Problem solved by BusinessContext
+
+Without a business context layer, each agent would need to directly know the parameter names used by each channel or domain.
+
+For example, in the TIM Accounts case, the frontend may send:
+
+```json
+{
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872"
+}
+```
+
+But another domain could send:
+
+```json
+{
+  "cpf": "12345678900",
+  "contract_id": "ABC123",
+  "protocol": "P987654"
+}
+```
+
+And another domain could use:
+
+```json
+{
+  "customer_id": "CUST-001",
+  "order_id": "ORD-789",
+  "ticket_id": "TCK-555"
+}
+```
+
+If each agent had to understand all these names, the framework would become coupled to the details of each channel, each frontend, and each MCP Server.
+
+`BusinessContext` avoids this by standardizing everything into an internal contract.
+
+---
+
+### 14.3.3. Core idea
+
+The framework transforms specific external names into standardized internal names.
+
+Example:
+
+```text
+msisdn         → customer_key
+invoice_id     → contract_key
+ura_call_id    → interaction_key
+session_id     → session_key
+```
+
+Then, when a tool needs to be called, the framework can do the reverse path:
+
+```text
+customer_key     → msisdn
+contract_key     → invoice_id
+interaction_key  → ura_call_id
+session_key      → session_id
+```
+
+This way, the agent works with a stable internal model, while the mapper handles external differences.
+
+---
+
+### 14.3.4. Flow overview
+
+```mermaid
+flowchart TD
+
+    U[User / Web, WhatsApp, Voice Channel] --> F[Frontend / Channel Client]
+
+    F -->|message + channel parameters| G[Channel Gateway]
+
+    G --> I[Identity Resolver]
+
+    I --> BC[BusinessContext]
+
+    BC --> S[Session Repository]
+
+    S --> LG[LangGraph Workflow]
+
+    LG --> SUP[Supervisor or Router]
+
+    SUP --> AR[Agent Runtime]
+
+    AR --> TR[MCP Tool Router]
+
+    TR --> MAP[Parameter Mapper]
+
+    MAP --> MCP[MCP Server]
+
+    MCP --> TOOL[Real tool: consultar_fatura, consultar_pagamentos...]
+
+    TOOL --> RES[Tool result]
+
+    RES --> AR
+    AR --> LG
+    LG --> G
+    G --> F
+    F --> U
+```
+
+The main point is:
+
+```text
+BusinessContext is not the tool.
+BusinessContext is not the MCP.
+BusinessContext is the internal contract that carries business identifiers.
+```
+
+---
+
+### 14.3.5. Concrete example: TIM Accounts
+
+Imagine the frontend sends this request:
+
+```json
+{
+  "channel": "web",
+  "message": "I want to check my invoice",
+  "agent": "telecom_contas",
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872",
+  "use_mock": true
+}
+```
+
+These names are specific to the channel or to the TIM domain:
+
+- `msisdn`: customer line number;
+- `invoice_id`: invoice identifier;
+- `ura_call_id`: IVR call/interaction identifier;
+- `use_mock`: indicator for mock or real execution.
+
+The framework should not force all agents to know these names directly.
+
+For this reason, the request is normalized into a `BusinessContext`:
+
+```python
+BusinessContext(
+    customer_key="11999999999",
+    contract_key="3000131180",
+    interaction_key="301953872",
+    account_key=None,
+    resource_key=None,
+    session_key="default:telecom_contas:abc-123",
+    metadata={
+        "channel": "web",
+        "frontend": "agent_frontend",
+        "use_mock": True
+    }
+)
+```
+
+---
+
+### 14.3.6. Main BusinessContext fields
+
+| Field | Meaning | TIM Accounts example |
+|---|---|---|
+| `customer_key` | Main customer identifier | `11999999999` |
+| `contract_key` | Contract, invoice, plan, order, or business relationship | `3000131180` |
+| `interaction_key` | Protocol, call, message, or source interaction | `301953872` |
+| `account_key` | Financial account, grouping account, or billing account | `None` |
+| `resource_key` | Technical resource, product, service, or specific asset | `None` |
+| `session_key` | Omnichannel conversational session | `default:telecom_contas:abc-123` |
+| `metadata` | Non-standard extra information | `channel`, `use_mock`, `frontend` |
+
+---
+
+### 14.3.7. Parameter normalization
+
+Normalization is the step that identifies received parameters and converts them to the framework canonical model.
+
+```mermaid
+flowchart LR
+
+    A[Frontend Request] --> B[Extracts raw parameters]
+
+    B --> C{Known parameter?}
+
+    C -->|msisdn| D[customer_key]
+    C -->|cpf/cnpj/customer_id| D
+
+    C -->|invoice_id| E[contract_key]
+    C -->|contract_id/order_id/plan_id| E
+
+    C -->|ura_call_id| F[interaction_key]
+    C -->|message_id/protocol/ticket_id| F
+
+    C -->|session_id| G[session_key]
+
+    D --> H[BusinessContext]
+    E --> H
+    F --> H
+    G --> H
+
+    H --> I[AgentState / Workflow State]
+```
+
+Examples of possible aliases:
+
+```text
+msisdn         → customer_key
+cpf            → customer_key
+cnpj           → customer_key
+customer_id    → customer_key
+
+invoice_id     → contract_key
+contract_id    → contract_key
+plan_id         → contract_key
+order_id        → contract_key
+
+ura_call_id    → interaction_key
+protocol       → interaction_key
+message_id     → interaction_key
+ticket_id      → interaction_key
+
+session_id     → session_key
+```
+
+---
+
+### 14.3.8. BusinessContext entering LangGraph State
+
+After it is created, `BusinessContext` enters the conversational workflow state.
+
+Conceptual example:
+
+```python
+state = {
+    "messages": [
+        {
+            "role": "user",
+            "content": "I want to check my invoice"
+        }
+    ],
+    "business_context": {
+        "customer_key": "11999999999",
+        "contract_key": "3000131180",
+        "interaction_key": "301953872",
+        "session_key": "default:telecom_contas:abc-123",
+        "metadata": {
+            "channel": "web",
+            "use_mock": True
+        }
+    }
+}
+```
+
+From this point on, any LangGraph node can access the context:
+
+```python
+state["business_context"]["customer_key"]
+state["business_context"]["contract_key"]
+state["business_context"]["interaction_key"]
+```
+
+However, in a cleaner architecture, the agent does not need to manipulate these fields directly. Ideally, `Agent Runtime`, `MCP Tool Router`, and `Parameter Mapper` perform this handoff.
+
+---
+
+### 14.3.9. Role of Agent Runtime
+
+`Agent Runtime` is the layer that executes the agent inside the framework.
+
+It receives:
+
+- conversation messages;
+- agent identity;
+- session state;
+- memory;
+- `BusinessContext`;
+- guardrails, judges, and observability settings.
+
+Conceptual example:
+
+```python
+agent_runtime.execute(
+    messages=state["messages"],
+    business_context=state["business_context"],
+    session_id=state["session_id"]
+)
+```
+
+During execution, the agent may decide to call a tool.
+
+Example:
+
+```json
+{
+  "tool": "consultar_fatura",
+  "arguments": {
+    "competencia": "atual"
+  }
+}
+```
+
+But the tool usually needs business data, such as customer, contract, or session.
+
+The runtime or the tool router complements the arguments using `BusinessContext`:
+
+```json
+{
+  "tool": "consultar_fatura",
+  "arguments": {
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "session_key": "default:telecom_contas:abc-123",
+    "competencia": "atual"
+  }
+}
+```
+
+---
+
+### 14.3.10. Role of MCP Tool Router
+
+`MCP Tool Router` is the layer that decides which MCP Server the tool call should be routed to.
+
+Example:
+
+```text
+consultar_fatura        → telecom MCP Server
+consultar_pagamentos    → telecom MCP Server
+consultar_pedido        → retail MCP Server
+solicitar_troca         → retail MCP Server
+```
+
+Simplified flow:
+
+```mermaid
+flowchart TD
+
+    A[Agent Runtime] --> B[Tool call request]
+
+    B --> C{Which tool?}
+
+    C -->|consultar_fatura| D[Telecom MCP Server]
+    C -->|consultar_pagamentos| D
+    C -->|consultar_pedido| E[Retail MCP Server]
+    C -->|solicitar_troca| E
+
+    D --> F[Executes telecom tool]
+    E --> G[Executes retail tool]
+```
+
+Before calling the MCP Server, the router must ensure that the arguments are in the format expected by the tool.
+
+That is where `Parameter Mapper` comes in.
+
+---
+
+### 14.3.11. Role of MCP Parameter Mapper
+
+The MCP Server may not expect the framework internal names.
+
+The framework uses:
+
+```json
+{
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872",
+  "session_key": "default:telecom_contas:abc-123"
+}
+```
+
+But the telecom MCP Server may expect:
+
+```json
+{
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872",
+  "session_id": "default:telecom_contas:abc-123"
+}
+```
+
+That is why the mapping exists.
+
+Configuration example:
+
+```yaml
+mcp_parameter_mapping:
+  defaults:
+    use_mock: true
+
+  tools:
+    consultar_fatura:
+      map:
+        customer_key: msisdn
+        contract_key: invoice_id
+        interaction_key: ura_call_id
+        session_key: session_id
+
+    consultar_pagamentos:
+      map:
+        customer_key: msisdn
+        contract_key: invoice_id
+        interaction_key: ura_call_id
+        session_key: session_id
+
+    consultar_plano:
+      map:
+        customer_key: msisdn
+        contract_key: contract_id
+        interaction_key: ura_call_id
+        session_key: session_id
+```
+
+This YAML should be interpreted as follows:
+
+```text
+Internal framework field  →  Field expected by the tool
+customer_key              →  msisdn
+contract_key              →  invoice_id
+interaction_key           →  ura_call_id
+session_key               →  session_id
+```
+
+---
+
+### 14.3.12. Tool mapping illustration
+
+```mermaid
+flowchart LR
+
+    A[BusinessContext] --> B[customer_key]
+    A --> C[contract_key]
+    A --> D[interaction_key]
+    A --> E[session_key]
+
+    B -->|mapping| F[msisdn]
+    C -->|mapping| G[invoice_id]
+    D -->|mapping| H[ura_call_id]
+    E -->|mapping| I[session_id]
+
+    F --> J[MCP Tool consultar_fatura]
+    G --> J
+    H --> J
+    I --> J
+```
+
+---
+
+### 14.3.13. Complete flow with sample data
+
+```mermaid
+sequenceDiagram
+    participant User as User
+    participant FE as Frontend
+    participant GW as Channel Gateway
+    participant ID as Identity Resolver
+    participant BC as BusinessContext
+    participant LG as LangGraph
+    participant AG as BillingAgent
+    participant TR as MCP Tool Router
+    participant MP as Parameter Mapper
+    participant MCP as Telecom MCP Server
+    participant Tool as consultar_fatura
+
+    User->>FE: I want to check my invoice
+    FE->>GW: message + msisdn + invoice_id + ura_call_id
+    GW->>ID: normalize identity
+    ID->>BC: customer_key, contract_key, interaction_key
+    BC->>LG: state with business_context
+    LG->>AG: execute billing_agent
+    AG->>TR: call consultar_fatura
+    TR->>MP: apply tool mapping
+    MP->>MCP: msisdn, invoice_id, ura_call_id
+    MCP->>Tool: execute consultar_fatura
+    Tool-->>MCP: invoice data
+    MCP-->>TR: response
+    TR-->>AG: tool result
+    AG-->>LG: final response
+    LG-->>GW: agent message
+    GW-->>FE: SSE / response
+    FE-->>User: displays response
+```
+
+---
+
+### 14.3.14. Comparison between external names, internal names, and tool names
+
+| Layer | Example | Responsibility |
+|---|---|---|
+| Frontend / Channel | `msisdn`, `invoice_id`, `ura_call_id` | Capture data from screen, IVR, WhatsApp, or Web |
+| Framework | `customer_key`, `contract_key`, `interaction_key` | Standardize the business context |
+| LangGraph State | `business_context` | Carry the context during the workflow |
+| Agent Runtime | uses `business_context` | Pass context to the agent and tool router |
+| MCP Parameter Mapper | `customer_key -> msisdn` | Translate internal names into names expected by the MCP |
+| MCP Server | `msisdn`, `invoice_id` | Execute real or mock tool |
+| Tool | `consultar_fatura(msisdn, invoice_id, ...)` | Retrieve business data |
+
+---
+
+### 14.3.15. End-to-end transformation example
+
+#### 14.3.15.1. Channel input
+
+```json
+{
+  "channel": "web",
+  "session_id": "default:telecom_contas:abc-123",
+  "message": "I want to check my invoice",
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872",
+  "use_mock": true
+}
+```
+
+#### 14.3.15.2. Generated BusinessContext
+
+```json
+{
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872",
+  "account_key": null,
+  "resource_key": null,
+  "session_key": "default:telecom_contas:abc-123",
+  "metadata": {
+    "channel": "web",
+    "use_mock": true
+  }
+}
+```
+
+#### 14.3.15.3. State sent to LangGraph
+
+```json
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "I want to check my invoice"
+    }
+  ],
+  "business_context": {
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "session_key": "default:telecom_contas:abc-123",
+    "metadata": {
+      "channel": "web",
+      "use_mock": true
+    }
+  }
+}
+```
+
+#### 14.3.15.4. Tool selected by the agent
+
+```json
+{
+  "tool": "consultar_fatura",
+  "arguments": {
+    "competencia": "atual"
+  }
+}
+```
+
+#### 14.3.15.5. Arguments enriched by the framework
+
+```json
+{
+  "tool": "consultar_fatura",
+  "arguments": {
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "session_key": "default:telecom_contas:abc-123",
+    "competencia": "atual"
+  }
+}
+```
+
+#### 14.3.15.6. Final arguments after MCP Parameter Mapper
+
+```json
+{
+  "tool": "consultar_fatura",
+  "arguments": {
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872",
+    "session_id": "default:telecom_contas:abc-123",
+    "competencia": "atual",
+    "use_mock": true
+  }
+}
+```
+
+---
+
+### 14.3.16. Summary diagram
+
+```text
+CHANNEL INPUT
+────────────────────────────────────────
+msisdn=11999999999
+invoice_id=3000131180
+ura_call_id=301953872
+message="I want to check my invoice"
+
+
+FRAMEWORK NORMALIZATION
+────────────────────────────────────────
+msisdn       ───────► customer_key
+invoice_id  ───────► contract_key
+ura_call_id ───────► interaction_key
+
+
+BUSINESS CONTEXT
+────────────────────────────────────────
+{
+  customer_key: "11999999999",
+  contract_key: "3000131180",
+  interaction_key: "301953872",
+  session_key: "default:telecom_contas:abc"
+}
+
+
+LANGGRAPH STATE
+────────────────────────────────────────
+{
+  messages: [...],
+  business_context: {...}
+}
+
+
+AGENT DECIDES TOOL
+────────────────────────────────────────
+consultar_fatura
+
+
+MCP PARAMETER MAPPING
+────────────────────────────────────────
+customer_key    ───────► msisdn
+contract_key    ───────► invoice_id
+interaction_key ───────► ura_call_id
+session_key     ───────► session_id
+
+
+FINAL CALL TO MCP SERVER
+────────────────────────────────────────
+{
+  "tool": "consultar_fatura",
+  "arguments": {
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872",
+    "session_id": "default:telecom_contas:abc",
+    "use_mock": true
+  }
+}
+```
+
+---
+
+### 14.3.17. Why this matters for the framework
+
+`BusinessContext` allows the framework to be reused across multiple domains.
+
+Without it, a TIM Accounts agent could look like this:
+
+```python
+msisdn = request.query_params["msisdn"]
+invoice_id = request.query_params["invoice_id"]
+ura_call_id = request.query_params["ura_call_id"]
+```
+
+This couples the agent directly to the frontend, the channel, and the TIM domain.
+
+With `BusinessContext`, the agent works with a standardized contract:
+
+```python
+customer = business_context.customer_key
+contract = business_context.contract_key
+interaction = business_context.interaction_key
+```
+
+And the details specific to each tool remain isolated in the mapper.
+
+---
+
+### 14.3.18. Reuse across different domains
+
+The same model can work across several domains:
+
+```text
+TIM Accounts:
+customer_key -> msisdn
+contract_key -> invoice_id
+interaction_key -> ura_call_id
+
+Banking:
+customer_key -> cpf
+contract_key -> account_id
+interaction_key -> protocol
+
+Retail:
+customer_key -> customer_id
+contract_key -> order_id
+interaction_key -> ticket_id
+
+Healthcare:
+customer_key -> patient_id
+contract_key -> appointment_id
+interaction_key -> protocol
+```
+
+The agent does not need to change.
+
+Only the mapping changes.
+
+---
+
+### 14.3.19. Where each responsibility should live
+
+| Responsibility | Suggested layer |
+|---|---|
+| Receive channel parameters | Frontend / Channel Gateway |
+| Identify aliases such as `msisdn`, `cpf`, `invoice_id` | Identity Resolver / BusinessContext Builder |
+| Create the canonical model | BusinessContext Builder |
+| Store context in the session | Session Repository |
+| Carry context during the workflow | LangGraph State |
+| Decide which agent executes | Supervisor / Router |
+| Execute the agent | Agent Runtime |
+| Decide which MCP Server handles the tool | MCP Tool Router |
+| Convert internal names to tool names | MCP Parameter Mapper |
+| Execute real or mock query | MCP Server / Tool |
+
+---
+
+### 14.3.20. Simplified mental flow
+
+```text
+1. The channel receives data with varied names
+   msisdn, cpf, invoice_id, protocol...
+
+2. The framework converts everything to canonical names
+   customer_key, contract_key, interaction_key...
+
+3. LangGraph carries this in the state
+   business_context inside AgentState
+
+4. The agent decides which tool to call
+   consultar_fatura
+
+5. Tool Router gets the BusinessContext
+   customer_key=11999999999
+
+6. Parameter Mapper translates it to the MCP
+   customer_key -> msisdn
+
+7. MCP Server executes
+   consultar_fatura(msisdn="11999999999")
+```
+
+---
+
+### 14.3.21. Final summary
+
+`BusinessContext` is the framework business identity adapter.
+
+It takes parameters that are specific to the channel or domain, transforms them into a standardized internal model, and then allows the `MCP Parameter Mapper` to convert that internal model into the names expected by each real tool.
+
+The complete chain is:
+
+```text
+Channel parameters
+    ↓
+Canonical BusinessContext
+    ↓
+LangGraph State
+    ↓
+Agent Runtime
+    ↓
+MCP Tool Router
+    ↓
+Parameter Mapper
+    ↓
+MCP Server
+    ↓
+Real tool
+```
+
+With this, the framework gains:
+
+- standardization;
+- decoupling between channel and agent;
+- reuse across multiple domains;
+- less code duplication;
+- easier maintenance;
+- stronger governance over which data reaches the tools;
+- flexibility to use mock or real tools;
+- compatibility with multiple MCP Servers.
 
 ### 14.4. Relationship between SessionContext and BusinessContext
 
