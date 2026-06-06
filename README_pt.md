@@ -1821,7 +1821,7 @@ flowchart TD
 ### 6.6. Conectar o nó ao Output Supervisor
 
 ```python
-builder.add_edge("billing_agent", "output_supervisor")
+builder.add_edge("financeiro_agent", "output_supervisor")
 ```
 
 Essa linha é importante porque a resposta do agente não deve ir direto ao usuário. Ela passa antes por output supervisor, output guardrails, judges, supervisor review e persistência.
