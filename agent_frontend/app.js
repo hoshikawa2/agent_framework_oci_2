@@ -259,55 +259,98 @@ function connectSSE(backend, sessionId) {
   });
 }
 
-form.addEventListener('submit', async (e)=>{
+form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const input=document.getElementById('message');
-  const text=input.value.trim(); if(!text) return;
-  add('user', text); input.value='';
 
-  const backend=val('backend').replace(/\/$/,'');
-  const channel=val('channel');
-  const session=val('session') || uuid();
-  const messageId=uuid();
-  const tenantId=val('tenant') || 'default';
-  const agentId=val('agent') || 'telecom_contas';
-  document.getElementById('session').value=session;
+  const input = document.getElementById('message');
+  const text = input.value.trim();
 
-  const businessContext=buildBusinessContext(session, messageId);
-  const commonContext={
-    channel_id:'browser',
-    tenant_id:tenantId,
-    agent_id:agentId,
-    business_context:businessContext
+  if (!text) return;
+
+  adicionarMensagem('user', text);
+  input.value = '';
+
+  const backend = val('backend').replace(/\/$/, '');
+  const channel = val('channel');
+  const session = val('session') || uuid();
+  const messageId = uuid();
+  const tenantId = val('tenant') || 'default';
+  const agentId = val('agent') || 'telecom_contas';
+
+  document.getElementById('session').value = session;
+
+  const businessContext = buildBusinessContext(session, messageId);
+
+  const commonContext = {
+    channel_id: 'browser',
+    tenant_id: tenantId,
+    agent_id: agentId,
+    business_context: businessContext
   };
 
-  const payload = channel === 'voice' ?
-    {transcript:text, session_id:session, ani:businessContext.customer_key, message_id:messageId, tenant_id:tenantId, agent_id:agentId, context:commonContext} :
-    {message:text, text:text, session_id:session, user_id:businessContext.customer_key || 'web-user', message_id:messageId, tenant_id:tenantId, agent_id:agentId, context:commonContext};
+  const payload = channel === 'voice'
+      ? {
+        transcript: text,
+        session_id: session,
+        ani: businessContext.customer_key,
+        message_id: messageId,
+        tenant_id: tenantId,
+        agent_id: agentId,
+        context: commonContext
+      }
+      : {
+        message: text,
+        text: text,
+        session_id: session,
+        user_id: businessContext.customer_key || 'web-user',
+        message_id: messageId,
+        tenant_id: tenantId,
+        agent_id: agentId,
+        context: commonContext
+      };
+
   syncDomainAliases(payload, businessContext);
 
-  try{
-    const useSse=document.getElementById('useSse')?.checked;
-    const endpoint=useSse?'/gateway/message/sse':'/gateway/message';
-    if(useSse){
-      connectSSE(backend, session);
-    }
-    const res=await fetch(`${backend}${endpoint}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel, tenant_id:tenantId, agent_id:agentId, payload})});
-    if(!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    const data=await res.json();
-    document.getElementById('session').value=data.session_id || session;
+  try {
+    status('Enviando mensagem');
 
-    if (data.text) {
-      adicionarMensagem("assistant", data.text);
+    const res = await fetch(`${backend}/gateway/message`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        channel,
+        tenant_id: tenantId,
+        agent_id: agentId,
+        payload
+      })
+    });
+
+    if (!res.ok) {
+      throw new Error(`${res.status} ${res.statusText}`);
     }
 
-    if (data.session_id) {
-      currentSessionId = data.session_id;
-      connectSSE(currentSessionId);
-    }
-    if(!useSse) add('assistant', data.text || data.speak || JSON.stringify(data));
-  }catch(err){
-    add('assistant', `Erro ao chamar backend: ${err.message}`);
+    const data = await res.json();
+
+    const returnedSessionId = data.session_id || session;
+    currentSessionId = returnedSessionId;
+    document.getElementById('session').value = returnedSessionId;
+
+    const resposta =
+        data.text ||
+        data.speak ||
+        data.message ||
+        data.response ||
+        data.content ||
+        data.output ||
+        JSON.stringify(data);
+
+    adicionarMensagem('assistant', resposta);
+    status('Resposta recebida');
+
+  } catch (err) {
+    adicionarMensagem('assistant', `Erro ao chamar backend: ${err.message}`);
     status('Erro de conexão');
   }
 });
