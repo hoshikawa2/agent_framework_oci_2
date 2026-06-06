@@ -3364,7 +3364,7 @@ O `mcp_parameter_mapping.yaml` olha para a saída.
 
 ---
 
-### 14.1.11. Exemplo prático no domínio TIM Contas
+### 14.1.11. Exemplo prático no domínio Contas
 
 Entrada:
 
@@ -3867,7 +3867,7 @@ MCP Server / Tool real
 
 Sem uma camada de contexto de negócio, cada agente precisaria conhecer diretamente os nomes dos parâmetros de cada canal ou domínio.
 
-Por exemplo, no caso TIM Contas, o frontend pode enviar:
+Por exemplo, no caso Contas, o frontend pode enviar:
 
 ```json
 {
@@ -3977,7 +3977,7 @@ BusinessContext é o contrato interno que carrega os identificadores de negócio
 
 ---
 
-### 14.3.5. Exemplo concreto: TIM Contas
+### 14.3.5. Exemplo concreto: Contas
 
 Imagine que o frontend envie esta requisição:
 
@@ -4024,7 +4024,7 @@ BusinessContext(
 
 ### 14.3.6. Campos principais do BusinessContext
 
-| Campo | Significado | Exemplo TIM Contas |
+| Campo | Significado | Exemplo Contas |
 |---|---|---|
 | `customer_key` | Identificador principal do cliente | `11999999999` |
 | `contract_key` | Contrato, fatura, plano, pedido ou vínculo de negócio | `3000131180` |
@@ -4533,7 +4533,7 @@ CHAMADA FINAL AO MCP SERVER
 
 O `BusinessContext` permite que o framework seja reutilizável para vários domínios.
 
-Sem ele, um agente de TIM Contas poderia ficar assim:
+Sem ele, um agente de Contas poderia ficar assim:
 
 ```python
 msisdn = request.query_params["msisdn"]
@@ -4560,7 +4560,7 @@ E o detalhe específico de cada tool fica isolado no mapper.
 O mesmo modelo pode funcionar para vários domínios:
 
 ```text
-TIM Contas:
+Contas:
 customer_key -> msisdn
 contract_key -> invoice_id
 interaction_key -> ura_call_id
