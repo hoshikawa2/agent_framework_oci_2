@@ -1797,12 +1797,12 @@ flowchart TD
     input_guardrails -->|blocked| persist[persist]
     input_guardrails -->|continue| routing_decision[routing_decision]
 
-    routing_decision -->|route = billing_agent| billing_agent[billing_agent]
-    routing_decision -->|route = product_agent| product_agent[product_agent]
-    routing_decision -->|route = orders_agent| orders_agent[orders_agent]
-    routing_decision -->|route = support_agent| support_agent[support_agent]
-    routing_decision -->|route = handoff| handoff[handoff]
-    routing_decision -->|route = supervisor_agent| supervisor_agent[supervisor_agent]
+    routing_decision -->|billing_agent| billing_agent[billing_agent]
+    routing_decision -->|product_agent| product_agent[product_agent]
+    routing_decision -->|orders_agent| orders_agent[orders_agent]
+    routing_decision -->|support_agent| support_agent[support_agent]
+    routing_decision -->|handoff| handoff[handoff]
+    routing_decision -->|supervisor_agent| supervisor_agent[supervisor_agent]
 
     billing_agent --> output_supervisor[output_supervisor]
     product_agent --> output_supervisor
@@ -1816,10 +1816,7 @@ flowchart TD
     judge --> supervisor_review[supervisor_review]
     supervisor_review --> persist
     persist --> END([END])
-
-A leitura fica assim:
 ```
-
 
 ### 6.6. Conectar o nó ao Output Supervisor
 
