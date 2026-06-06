@@ -1507,12 +1507,12 @@ class FinanceiroAgent(AgentRuntimeMixin):
         # mas preserva o texto original apenas quando precisar extrair identificadores.
         user_text = state.get("sanitized_input") or state.get("user_text") or ""
         original_text = (
-            ctx.get("message")
-            or ctx.get("text")
-            or ctx.get("query")
-            or session.get("last_user_message")
-            or state.get("user_text")
-            or user_text
+                ctx.get("message")
+                or ctx.get("text")
+                or ctx.get("query")
+                or session.get("last_user_message")
+                or state.get("user_text")
+                or user_text
         )
 
         # 4. Chama tools MCP selecionadas pelo roteamento, quando configuradas.
@@ -1656,67 +1656,234 @@ Ele consegue ser testado isoladamente com state simulado.
 
 ## 6. Registrando o agente no workflow
 
-### 6.1. Antes do código: o que é o workflow?
+### 6.1. Objetivo deste capítulo
 
-O workflow é o caminho controlado pelo LangGraph. Ele define a ordem de execução:
-
-```text
-entrada → guardrails → roteamento → agente → revisão → persistência → resposta
-```
-
-Criar a classe do agente não basta. O LangGraph só executa nós que foram registrados no grafo.
-
-O registro no workflow responde três perguntas:
+Até aqui, o tutorial criou a classe de domínio `FinanceiroAgent` em:
 
 ```text
-Qual classe implementa o agente?
-Qual nome de nó representa esse agente no grafo?
-Para onde o fluxo segue depois que o agente responde?
+app/agents/financeiro_agent.py
 ```
 
-### 6.2. Importar o agente
+Mas criar a classe não é suficiente. O LangGraph só executa aquilo que foi registrado como nó do grafo.
 
-Edite:
+Este capítulo mostra, de forma implementável, como conectar o `financeiro_agent` ao workflow real do template.
+
+A partir daqui, considere que os trechos de código são para serem aplicados no projeto, não apenas exemplos conceituais.
+
+O objetivo final é fazer o fluxo abaixo existir no grafo:
+
+```text
+START
+  ↓
+input_guardrails
+  ↓
+routing_decision
+  ↓
+financeiro_agent
+  ↓
+output_supervisor
+  ↓
+output_guardrails
+  ↓
+judge
+  ↓
+supervisor_review
+  ↓
+persist
+  ↓
+END
+```
+
+---
+
+### 6.2. O que precisa ser alterado no workflow
+
+Edite o arquivo:
 
 ```text
 app/workflows/agent_graph.py
 ```
 
-Adicione:
+Para registrar um novo agente no workflow, você precisa realizar seis alterações:
+
+```text
+1. Importar a classe FinanceiroAgent.
+2. Instanciar self.financeiro no __init__.
+3. Criar o método wrapper financeiro_agent(self, state).
+4. Registrar o nó financeiro_agent no StateGraph.
+5. Adicionar a rota condicional routing_decision → financeiro_agent.
+6. Conectar financeiro_agent → output_supervisor.
+```
+
+Se qualquer uma dessas etapas faltar, o agente pode existir no código, mas nunca será executado pelo LangGraph.
+
+---
+
+### 6.3. Importar o agente
+
+No início de `app/workflows/agent_graph.py`, adicione:
 
 ```python
 from app.agents.financeiro_agent import FinanceiroAgent
 ```
 
-### 6.3. Instanciar o agente
+Esse import torna a classe disponível para o workflow.
 
-No `__init__` da classe `AgentWorkflow`, depois da criação de `agent_kwargs`:
+---
+
+### 6.4. Instanciar o agente no `__init__`
+
+Dentro da classe `AgentWorkflow`, localize o ponto onde os agentes existentes são instanciados, por exemplo:
+
+```python
+self.billing = BillingAgent(llm, **agent_kwargs)
+self.product = ProductAgent(llm, **agent_kwargs)
+self.orders = OrdersAgent(llm, **agent_kwargs)
+self.support = SupportAgent(llm, **agent_kwargs)
+```
+
+Adicione:
 
 ```python
 self.financeiro = FinanceiroAgent(llm, **agent_kwargs)
 ```
 
-Essa linha injeta no agente os mesmos motores compartilhados pelos demais agentes: LLM, telemetry, MCP Tool Router, RAG, cache, settings e observer.
+O `agent_kwargs` deve ser o mesmo usado pelos outros agentes. Ele normalmente carrega capacidades compartilhadas do framework, como:
 
-### 6.4. Criar o nó do LangGraph
+```text
+telemetry
+tool_router
+rag_service
+cache
+settings
+observer
+memory
+summary_memory
+```
 
-Em `_build_graph()`:
+O agente financeiro não deve criar esses objetos sozinho. Ele deve recebê-los do workflow.
+
+---
+
+### 6.5. Criar o método wrapper real do `financeiro_agent`
+
+#### 6.5.1. O que é o wrapper neste framework
+
+No LangGraph, um nó precisa ser uma função, método ou callable que receba o `state` atual.
+
+De forma simplificada:
+
+```python
+def node(state):
+    return {}
+```
+
+No framework, porém, o agente real é uma classe com método `run()`:
+
+```python
+await self.financeiro.run(state)
+```
+
+Por isso, o workflow precisa de um método intermediário. Esse método é o wrapper.
+
+No projeto real, o wrapper **não** deve ser documentado como uma função solta chamada `billing_wrapper(state)`, porque isso dá a entender que o desenvolvedor precisa criar uma função fictícia fora do workflow.
+
+A implementação correta é um método da classe `AgentWorkflow`.
+
+#### 6.5.2. Código do wrapper
+
+Adicione o método abaixo dentro da classe `AgentWorkflow`:
+
+```python
+async def financeiro_agent(self, state):
+    async with self.langgraph_telemetry.node("financeiro_agent", state):
+        async with self.telemetry.span(
+            "workflow.agent.financeiro",
+            session_id=state.get("conversation_key") or state.get("session_id"),
+            input={"intent": state.get("intent")},
+        ):
+            return await self.financeiro.run(state)
+```
+
+Esse método faz a ponte entre:
+
+```text
+LangGraph node
+  ↓
+AgentWorkflow.financeiro_agent(state)
+  ↓
+FinanceiroAgent.run(state)
+```
+
+A lógica de negócio continua dentro de:
+
+```python
+FinanceiroAgent.run(state)
+```
+
+O wrapper apenas:
+
+```text
+recebe o state;
+abre telemetria do nó;
+abre span do agente;
+chama o agente real;
+retorna o resultado para o workflow.
+```
+
+---
+
+### 6.6. Registrar o nó no `StateGraph`
+
+Dentro do método `_build_graph()`, localize os nós já existentes:
+
+```python
+builder.add_node("billing_agent", self._node("billing_agent", self.billing_agent))
+builder.add_node("product_agent", self._node("product_agent", self.product_agent))
+builder.add_node("orders_agent", self._node("orders_agent", self.orders_agent))
+builder.add_node("support_agent", self._node("support_agent", self.support_agent))
+```
+
+Adicione:
 
 ```python
 builder.add_node("financeiro_agent", self._node("financeiro_agent", self.financeiro_agent))
 ```
 
-O primeiro `financeiro_agent` é o nome do nó no grafo. O segundo `self.financeiro_agent` é o método wrapper que será chamado quando o fluxo chegar nesse nó.
+O primeiro `financeiro_agent` é o nome do nó dentro do grafo.
 
-### 6.5. Adicionar rota condicional
+O segundo `self.financeiro_agent` é o método wrapper criado na etapa anterior.
 
-No dicionário de `builder.add_conditional_edges("routing_decision", ...)`, inclua:
+---
+
+### 6.7. Adicionar a rota condicional para o novo agente
+
+O nó `routing_decision` decide qual agente será chamado.
+
+No método `_build_graph()`, localize:
+
+```python
+builder.add_conditional_edges(
+    "routing_decision",
+    lambda s: s.get("route", "billing_agent"),
+    {
+        "billing_agent": "billing_agent",
+        "product_agent": "product_agent",
+        "orders_agent": "orders_agent",
+        "support_agent": "support_agent",
+        "handoff": "handoff",
+        "supervisor_agent": "supervisor_agent",
+    },
+)
+```
+
+Adicione a rota do financeiro:
 
 ```python
 "financeiro_agent": "financeiro_agent",
 ```
 
-Exemplo:
+O bloco completo fica assim:
 
 ```python
 builder.add_conditional_edges(
@@ -1734,60 +1901,129 @@ builder.add_conditional_edges(
 )
 ```
 
-Essa tabela conecta a decisão do roteador com o nó real do grafo.
+Essa etapa é obrigatória.
 
-Outro exemplo:
+Sem ela, mesmo que o `routing.yaml` retorne:
 
+```text
+route = financeiro_agent
+```
+
+o LangGraph não saberá para qual nó ir.
+
+---
+
+### 6.8. Conectar o `financeiro_agent` ao `output_supervisor`
+
+Depois que o agente financeiro responder, o fluxo não deve ir direto ao usuário.
+
+Ele deve passar pelo mesmo pipeline dos demais agentes:
+
+```text
+output_supervisor
+  ↓
+output_guardrails
+  ↓
+judge
+  ↓
+supervisor_review
+  ↓
+persist
+```
+
+Localize os edges dos agentes existentes:
 
 ```python
-    def _build_graph(self):
-        builder = StateGraph(AgentState)
-        builder.add_node("input_guardrails", self._node("input_guardrails", self.input_guardrails))
-        builder.add_node("routing_decision", self._node("routing_decision", self.routing_decision))
-        builder.add_node("billing_agent", self._node("billing_agent", self.billing_agent))
-        builder.add_node("product_agent", self._node("product_agent", self.product_agent))
-        builder.add_node("orders_agent", self._node("orders_agent", self.orders_agent))
-        builder.add_node("support_agent", self._node("support_agent", self.support_agent))
-        builder.add_node("handoff", self._node("handoff", self.handoff))
-        builder.add_node("supervisor_agent", self._node("supervisor_agent", self.supervisor_agent))
-        builder.add_node("output_supervisor", self._node("output_supervisor", self.output_supervisor))
-        builder.add_node("output_guardrails", self._node("output_guardrails", self.output_guardrails))
-        builder.add_node("judge", self._node("judge", self.judge))
-        builder.add_node("supervisor_review", self._node("supervisor_review", self.supervisor_review))
-        builder.add_node("persist", self._node("persist", self.persist))
-
-        builder.add_edge(START, "input_guardrails")
-        builder.add_conditional_edges(
-            "input_guardrails",
-            self._after_input_guardrails,
-            {"blocked": "persist", "continue": "routing_decision"},
-        )
-        builder.add_conditional_edges(
-            "routing_decision",
-            lambda s: s.get("route", "billing_agent"),
-            {
-                "billing_agent": "billing_agent",
-                "product_agent": "product_agent",
-                "orders_agent": "orders_agent",
-                "support_agent": "support_agent",
-                "handoff": "handoff",
-                "supervisor_agent": "supervisor_agent",
-            },
-        )
-        builder.add_edge("billing_agent", "output_supervisor")
-        builder.add_edge("product_agent", "output_supervisor")
-        builder.add_edge("orders_agent", "output_supervisor")
-        builder.add_edge("support_agent", "output_supervisor")
-        builder.add_edge("handoff", "output_supervisor")
-        builder.add_edge("supervisor_agent", "output_supervisor")
-        builder.add_edge("output_supervisor", "output_guardrails")
-        builder.add_edge("output_guardrails", "judge")
-        builder.add_edge("judge", "supervisor_review")
-        builder.add_edge("supervisor_review", "persist")
-        builder.add_edge("persist", END)
-
-        return builder.compile(checkpointer=create_langgraph_checkpointer(self.settings))
+builder.add_edge("billing_agent", "output_supervisor")
+builder.add_edge("product_agent", "output_supervisor")
+builder.add_edge("orders_agent", "output_supervisor")
+builder.add_edge("support_agent", "output_supervisor")
 ```
+
+Adicione:
+
+```python
+builder.add_edge("financeiro_agent", "output_supervisor")
+```
+
+Sem essa linha, o nó `financeiro_agent` pode até executar, mas o grafo pode não saber como continuar depois dele.
+
+---
+
+### 6.9. Exemplo completo do `_build_graph()` com `financeiro_agent`
+
+Abaixo está o exemplo completo do método `_build_graph()` com o novo agente incluído.
+
+Use este bloco como referência para comparar com o seu arquivo real:
+
+```python
+def _build_graph(self):
+    builder = StateGraph(AgentState)
+
+    builder.add_node("input_guardrails", self._node("input_guardrails", self.input_guardrails))
+    builder.add_node("routing_decision", self._node("routing_decision", self.routing_decision))
+
+    builder.add_node("billing_agent", self._node("billing_agent", self.billing_agent))
+    builder.add_node("product_agent", self._node("product_agent", self.product_agent))
+    builder.add_node("orders_agent", self._node("orders_agent", self.orders_agent))
+    builder.add_node("support_agent", self._node("support_agent", self.support_agent))
+    builder.add_node("financeiro_agent", self._node("financeiro_agent", self.financeiro_agent))
+
+    builder.add_node("handoff", self._node("handoff", self.handoff))
+    builder.add_node("supervisor_agent", self._node("supervisor_agent", self.supervisor_agent))
+    builder.add_node("output_supervisor", self._node("output_supervisor", self.output_supervisor))
+    builder.add_node("output_guardrails", self._node("output_guardrails", self.output_guardrails))
+    builder.add_node("judge", self._node("judge", self.judge))
+    builder.add_node("supervisor_review", self._node("supervisor_review", self.supervisor_review))
+    builder.add_node("persist", self._node("persist", self.persist))
+
+    builder.add_edge(START, "input_guardrails")
+
+    builder.add_conditional_edges(
+        "input_guardrails",
+        self._after_input_guardrails,
+        {
+            "blocked": "persist",
+            "continue": "routing_decision",
+        },
+    )
+
+    builder.add_conditional_edges(
+        "routing_decision",
+        lambda s: s.get("route", "billing_agent"),
+        {
+            "billing_agent": "billing_agent",
+            "product_agent": "product_agent",
+            "orders_agent": "orders_agent",
+            "support_agent": "support_agent",
+            "financeiro_agent": "financeiro_agent",
+            "handoff": "handoff",
+            "supervisor_agent": "supervisor_agent",
+        },
+    )
+
+    builder.add_edge("billing_agent", "output_supervisor")
+    builder.add_edge("product_agent", "output_supervisor")
+    builder.add_edge("orders_agent", "output_supervisor")
+    builder.add_edge("support_agent", "output_supervisor")
+    builder.add_edge("financeiro_agent", "output_supervisor")
+    builder.add_edge("handoff", "output_supervisor")
+    builder.add_edge("supervisor_agent", "output_supervisor")
+
+    builder.add_edge("output_supervisor", "output_guardrails")
+    builder.add_edge("output_guardrails", "judge")
+    builder.add_edge("judge", "supervisor_review")
+    builder.add_edge("supervisor_review", "persist")
+    builder.add_edge("persist", END)
+
+    return builder.compile(
+        checkpointer=create_langgraph_checkpointer(self.settings)
+    )
+```
+
+---
+
+### 6.10. Grafo completo com `financeiro_agent`
 
 ```mermaid
 flowchart TD
@@ -1801,6 +2037,7 @@ flowchart TD
     routing_decision -->|product_agent| product_agent[product_agent]
     routing_decision -->|orders_agent| orders_agent[orders_agent]
     routing_decision -->|support_agent| support_agent[support_agent]
+    routing_decision -->|financeiro_agent| financeiro_agent[financeiro_agent]
     routing_decision -->|handoff| handoff[handoff]
     routing_decision -->|supervisor_agent| supervisor_agent[supervisor_agent]
 
@@ -1808,6 +2045,7 @@ flowchart TD
     product_agent --> output_supervisor
     orders_agent --> output_supervisor
     support_agent --> output_supervisor
+    financeiro_agent --> output_supervisor
     handoff --> output_supervisor
     supervisor_agent --> output_supervisor
 
@@ -1818,112 +2056,87 @@ flowchart TD
     persist --> END([END])
 ```
 
-### 6.6. Conectar o nó ao Output Supervisor
+---
 
-```python
-builder.add_edge("financeiro_agent", "output_supervisor")
+### 6.11. Como o `routing.yaml` se conecta ao grafo
+
+O workflow só sabe executar uma rota se ela existir no mapa de `add_conditional_edges()`.
+
+O `routing.yaml` precisa devolver exatamente o mesmo nome:
+
+```yaml
+intents:
+  - name: financeiro_pagamentos
+    domain: financeiro
+    agent: financeiro_agent
+    description: Dúvidas sobre pagamento, boleto, saldo, acordo, cobrança, vencimento e segunda via.
+    priority: 15
+    mcp_tools:
+      - consultar_titulo_financeiro
+      - consultar_pagamentos_financeiro
+    keywords:
+      - pagamento
+      - boleto
+      - saldo
+      - acordo
+      - financeiro
+      - segunda via
+      - vencimento
+      - cobrança
+      - contestação
 ```
 
-Essa linha é importante porque a resposta do agente não deve ir direto ao usuário. Ela passa antes por output supervisor, output guardrails, judges, supervisor review e persistência.
+A relação precisa ficar assim:
 
-### 6.7. Criar o método wrapper
-
-#### O que é um Wrapper?
-
-O LangGraph exige nós no formato:
-
-```python
-def node(state):
-    return {}
+```text
+routing.yaml
+  agent: financeiro_agent
+      ↓
+state["route"] = financeiro_agent
+      ↓
+add_conditional_edges possui "financeiro_agent"
+      ↓
+LangGraph executa o nó financeiro_agent
+      ↓
+AgentWorkflow.financeiro_agent(state)
+      ↓
+FinanceiroAgent.run(state)
 ```
 
-Mas os agentes reais normalmente possuem:
+Se o YAML usar `financeiro`, mas o grafo usar `financeiro_agent`, o roteamento não vai encontrar o nó correto.
 
-```python
-agent.execute(...)
-```
-
-O wrapper faz a adaptação.
-
-```python
-def billing_wrapper(state):
-
-    resposta = billing_agent.execute(
-        state["messages"]
-    )
-
-    return {
-        "messages": [resposta]
-    }
-```
+Use sempre o mesmo nome.
 
 ---
 
-#### Fluxo Interno do Wrapper
+### 6.12. Adicionar o agente ao modo supervisor
 
-```text
-LangGraph
-    │
-    ▼
-BillingWrapper
-    │
-    ▼
-BillingAgent.execute()
-    │
-    ▼
-MCP Router
-    │
-    ▼
-MCP Server
-    │
-    ▼
-OCI GenAI
+Se o projeto estiver usando:
+
+```env
+ROUTING_MODE=supervisor
 ```
 
-Na classe `AgentWorkflow`:
+ou se houver handoff supervisionado, o supervisor também precisa saber chamar o novo agente.
+
+No método `supervisor_agent()`, localize o mapa de handlers:
 
 ```python
-async def financeiro_agent(self, state):
-    async with self.langgraph_telemetry.node("financeiro_agent", state):
-        async with self.telemetry.span(
-            "workflow.agent.financeiro",
-            session_id=state.get("conversation_key") or state.get("session_id"),
-            input={"intent": state.get("intent")},
-        ):
-            return await self.financeiro.run(state)
+handlers = {
+    "billing_agent": self.billing.run,
+    "product_agent": self.product.run,
+    "orders_agent": self.orders.run,
+    "support_agent": self.support.run,
+}
 ```
 
-O wrapper adiciona telemetria ao redor do agente. A lógica de negócio continua dentro de `FinanceiroAgent.run()`.
-
-### 6.8. Adicionar ao modo supervisor
-
-#### O que é o Supervisor
-
-O supervisor normalmente é um nó LangGraph.
-
-Pode ser:
-
-- LLM
-- Router baseado em regras
-- Router YAML
-- Router híbrido
-
-Exemplo:
+Adicione:
 
 ```python
-def supervisor(state):
-
-    return {
-        "next": "billing_agent"
-    }
+"financeiro_agent": self.financeiro.run,
 ```
 
-Ele não executa o BillingAgent.
-
-Ele apenas decide qual agente deverá executar.
-
-
-No método `supervisor_agent()`, ajuste o mapa de handlers:
+O bloco final fica assim:
 
 ```python
 handlers = {
@@ -1935,19 +2148,139 @@ handlers = {
 }
 ```
 
-Isso permite que o supervisor chame o novo agente quando `ROUTING_MODE=supervisor` ou quando houver handoff supervisionado.
+Atenção: no modo supervisor, o handler normalmente chama diretamente o `run()` do agente. No modo router/LangGraph, a execução passa pelo wrapper registrado como nó.
 
-### 6.9. Erros comuns neste capítulo
+---
+
+### 6.13. Ordem correta de implementação
+
+Para evitar confusão, implemente nesta ordem:
 
 ```text
-Criar a classe do agente, mas esquecer add_node.
-Adicionar add_node, mas esquecer add_conditional_edges.
-Adicionar rota, mas esquecer add_edge para output_supervisor.
-Usar nome diferente em routing.yaml, workflow e classe.
-Chamar self.financeiro.run direto sem wrapper de telemetria.
+1. Criar app/agents/financeiro_agent.py.
+2. Importar FinanceiroAgent em app/workflows/agent_graph.py.
+3. Instanciar self.financeiro no __init__.
+4. Criar o wrapper async financeiro_agent(self, state).
+5. Adicionar builder.add_node("financeiro_agent", ...).
+6. Adicionar "financeiro_agent": "financeiro_agent" em add_conditional_edges.
+7. Adicionar builder.add_edge("financeiro_agent", "output_supervisor").
+8. Adicionar financeiro_agent ao handlers do supervisor, se o modo supervisor for usado.
+9. Registrar financeiro_agent em config/agents.yaml.
+10. Criar config/agents/financeiro_agent/*.yaml.
+11. Configurar a intent em config/routing.yaml.
+12. Configurar tools, MCP server e mcp_parameter_mapping.yaml.
+13. Testar via /gateway/message.
+14. Validar logs de routing, node, edge, MCP, RAG, output guardrails, judge e persistência.
+```
+
+Essa ordem evita que o desenvolvedor crie configuração YAML antes de existir nó real no grafo, ou crie a classe do agente sem que o LangGraph consiga alcançá-la.
+
+---
+
+### 6.14. Como testar se o nó entrou no grafo
+
+Após iniciar o backend, envie uma mensagem que bata com a intent financeira, por exemplo:
+
+```text
+Quero consultar o pagamento do meu boleto.
+```
+
+Nos logs, procure por eventos como:
+
+```text
+router.decision route=financeiro_agent
+langgraph.edge.selected source=routing_decision target=financeiro_agent
+langgraph.node.started node=financeiro_agent
+workflow.agent.financeiro.started
+```
+
+Se aparecer:
+
+```text
+router.decision route=financeiro_agent
+```
+
+mas não aparecer:
+
+```text
+langgraph.node.started node=financeiro_agent
+```
+
+então o problema provavelmente está no `add_conditional_edges()`.
+
+Se aparecer:
+
+```text
+langgraph.node.started node=financeiro_agent
+```
+
+mas não aparecer:
+
+```text
+workflow.agent.financeiro.started
+```
+
+então o problema provavelmente está no wrapper.
+
+Se aparecer:
+
+```text
+workflow.agent.financeiro.started
+```
+
+mas não houver resposta final, verifique os edges depois do agente:
+
+```python
+builder.add_edge("financeiro_agent", "output_supervisor")
 ```
 
 ---
+
+### 6.15. Erros comuns neste capítulo
+
+```text
+Criar FinanceiroAgent, mas esquecer de instanciar self.financeiro.
+Instanciar self.financeiro, mas esquecer o wrapper financeiro_agent(self, state).
+Criar o wrapper, mas esquecer builder.add_node().
+Adicionar builder.add_node(), mas esquecer add_conditional_edges().
+Configurar routing.yaml com agent: financeiro, mas o grafo espera financeiro_agent.
+Adicionar a rota condicional, mas esquecer builder.add_edge("financeiro_agent", "output_supervisor").
+Adicionar no modo router, mas esquecer o mapa handlers do supervisor.
+Colocar lógica de negócio no wrapper em vez de manter em FinanceiroAgent.run().
+Copiar exemplos de billing_agent sem trocar nomes para financeiro_agent.
+```
+
+---
+
+### 6.16. Resumo do capítulo
+
+Para o `financeiro_agent` funcionar, três coisas precisam estar alinhadas:
+
+```text
+1. Código do agente
+   app/agents/financeiro_agent.py
+   class FinanceiroAgent
+
+2. Registro no workflow
+   self.financeiro = FinanceiroAgent(...)
+   async def financeiro_agent(self, state)
+   builder.add_node("financeiro_agent", ...)
+   add_conditional_edges(... "financeiro_agent": "financeiro_agent")
+   builder.add_edge("financeiro_agent", "output_supervisor")
+
+3. Configuração
+   config/agents.yaml
+   config/routing.yaml
+   config/tools.yaml
+   config/mcp_servers.yaml
+   config/mcp_parameter_mapping.yaml
+   config/agents/financeiro_agent/*.yaml
+```
+
+Quando esses três blocos estão consistentes, o LangGraph consegue sair do roteamento, entrar no agente financeiro, passar pelos supervisores/guardrails/judges e persistir a resposta.
+
+---
+
 
 ## 7. Ajustando o estado do agente
 
@@ -2505,15 +2838,15 @@ Exemplo ruim:
 
 ```python
 customer_key = (
-    request.get("msisdn")
-    or request.get("cpf")
-    or request.get("customer_id")
+        request.get("msisdn")
+        or request.get("cpf")
+        or request.get("customer_id")
 )
 
 contract_key = (
-    request.get("invoice_id")
-    or request.get("account_id")
-    or request.get("order_id")
+        request.get("invoice_id")
+        or request.get("account_id")
+        or request.get("order_id")
 )
 ```
 
@@ -6374,15 +6707,15 @@ Exemplo:
 ```python
 class AgentWorkflow:
     def __init__(
-        self,
-        llm,
-        memory,
-        telemetry,
-        analytics,
-        settings,
-        observer=None,
-        tool_router=None,
-        summary_memory=None,
+            self,
+            llm,
+            memory,
+            telemetry,
+            analytics,
+            settings,
+            observer=None,
+            tool_router=None,
+            summary_memory=None,
     ):
         self.llm = llm
         self.memory = memory
@@ -6894,17 +7227,17 @@ text RAG + MCP
 Arquitetura:
 
 text Usuário
-    ↓
-  Agente
-    ↓
-┌─────────────┐ 
-│ MCP         │ 
-│ RAG         │ 
+↓
+Agente
+↓
+┌─────────────┐
+│ MCP         │
+│ RAG         │
 └─────────────┘
-    ↓
-    LLM
-    ↓
-    Resposta
+↓
+LLM
+↓
+Resposta
 
 ---
 
@@ -6936,16 +7269,16 @@ GraphRAG adiciona conhecimento baseado em relacionamentos.
 Arquitetura:
 
 text Documento
-    ↓
-Extração de Entidades 
-    ↓
-    Grafo
-    ↓
-    Consulta PGQL
-    ↓
-    Contexto
-    ↓
-    LLM
+↓
+Extração de Entidades
+↓
+Grafo
+↓
+Consulta PGQL
+↓
+Contexto
+↓
+LLM
 
 Casos de uso:
 
