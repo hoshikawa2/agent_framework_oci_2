@@ -1786,9 +1786,7 @@ await self.financeiro.run(state)
 
 Por isso, o workflow precisa de um método intermediário. Esse método é o wrapper.
 
-No projeto real, o wrapper **não** deve ser documentado como uma função solta chamada `billing_wrapper(state)`, porque isso dá a entender que o desenvolvedor precisa criar uma função fictícia fora do workflow.
-
-A implementação correta é um método da classe `AgentWorkflow`.
+A implementação é um método dentro da classe `AgentWorkflow` (/app/workflows/agent_graph.py).
 
 #### 6.5.2. Código do wrapper
 
