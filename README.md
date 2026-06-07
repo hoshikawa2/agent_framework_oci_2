@@ -12,7 +12,7 @@ Config YAML = changeable behavior without recompiling code
 IC/NOC/GRL = business, operation and governance traceability
 ```
 
-![img_1.png](img_1.png)
+![img_1_en.png](img_1_en.png)
 
 The goal is for each new agent to implement only its domain logic — prompts, business rules, tools, schemas, and specific nodes — without recreating engines that already belong to the framework.
 
