@@ -130,6 +130,13 @@ function abrirSSE(sessionId) {
   }
 }
 
+function normalizeSessionId(value) {
+  if (!value) return uuid();
+
+  const parts = value.split(":");
+  return parts[parts.length - 1]; // mantém só o UUID final
+}
+
 function connectSSE(backend, sessionId) {
   if (!sessionId) {
     console.warn("SSE não aberto: sessionId ausente.");
@@ -272,7 +279,8 @@ form.addEventListener('submit', async (e) => {
 
   const backend = val('backend').replace(/\/$/, '');
   const channel = val('channel');
-  const session = val('session') || uuid();
+  // const session = val('session') || uuid();
+  const session = normalizeSessionId(val('session'));
   const messageId = uuid();
   const tenantId = val('tenant') || 'default';
   const agentId = val('agent') || 'telecom_contas';
