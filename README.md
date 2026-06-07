@@ -597,7 +597,8 @@ Use _emit_grl() for domain-specific governance.
 The `_collect_mcp_context(state)` method reads the list of tools already chosen by the router:
 
 ```python
-tools = state.get("mcp_tools") or[]```
+tools = state.get("mcp_tools") or[]
+```
 
 Then it calls the framework's `tool_router` for each tool. The agent does not need to know if the tool uses HTTP, Docker, mock or a real service.
 
@@ -811,13 +812,14 @@ A minimal example is:
 ```python
 messages = [
 {
-"role": "system",
-"content": "You are a financial agent. Do not make up data.",
+    "role": "system",
+    "content": "You are a financial agent. Do not make up data.",
 },
 {
-"role": "user",
-"content": "I want to check my payment.",
-},]```
+    "role": "user",
+    "content": "I want to check my payment.",
+},]
+```
 
 This format is common in modern conversational AI frameworks and providers. It appears, with minor variations, in OpenAI Chat Completions/Responses API, OCI Generative AI OpenAI-compatible, LangChain `ChatModel`, LangGraph, Semantic Kernel, LlamaIndex, and in architectures with tool calling and MCP.
 
@@ -870,14 +872,14 @@ Example:
 
 ```python
 system_content = apply_agent_profile_prompt(
-state,
-"""
-You are a corporate financial agent.
-Use only data provided by MCP, RAG, or business_context.
-Do not confirm payment, write-off, settlement, or dispute without evidence from the tool.
-If a mandatory identifier is missing, request only that piece of information.
-Respond in a short, operational, and auditable manner.
-""".strip(),
+    state,
+    """
+    You are a corporate financial agent.
+    Use only data provided by MCP, RAG, or business_context.
+    Do not confirm payment, write-off, settlement, or dispute without evidence from the tool.
+    If a mandatory identifier is missing, request only that piece of information.
+    Respond in a short, operational, and auditable manner.
+    """.strip(),
 )
 ```
 
@@ -902,30 +904,30 @@ Example:
 
 ```python
 messages = [
-{
-"role": "system",
-"content": system_content,
-},
-{
-"role": "user",
-"content": (
-"User message:\n"
-f"{user_text}\n\n"
-"Intent and route chosen by the framework:\n"
-f"intent={state.get('intent')} route={state.get('route')}\n\n"
-"Normalized business context:\n"
-f"customer_key={business_context.get('customer_key')}\n"
-f"contract_key={business_context.get('contract_key')}\n"
-f"interaction_key={business_context.get('interaction_key')}\n\n"
-"MCP results:\n"
-f"{tool_context}\n\n"
-"RAG context:\n"
-f"{rag_context or '[no RAG context]'}\n\n"
-"Response instruction:\n"
-"Respond only based on the evidence above. "
-"If a required piece of evidence is missing, say it was not found."
-),
-},
+    {
+        "role": "system",
+        "content": system_content,
+    },
+    {
+        "role": "user",
+        "content": (
+            "User message:\n"
+            f"{user_text}\n\n"
+            "Intent and route chosen by the framework:\n"
+            f"intent={state.get('intent')} route={state.get('route')}\n\n"
+            "Normalized business context:\n"
+            f"customer_key={business_context.get('customer_key')}\n"
+            f"contract_key={business_context.get('contract_key')}\n"
+            f"interaction_key={business_context.get('interaction_key')}\n\n"
+            "MCP results:\n"
+            f"{tool_context}\n\n"
+            "RAG context:\n"
+            f"{rag_context or '[no RAG context]'}\n\n"
+            "Response instruction:\n"
+            "Respond only based on the evidence above. "
+            "If a required piece of evidence is missing, say it was not found."
+        ),
+    },
 ]
 ```
 
@@ -1043,13 +1045,14 @@ Better:
 
 ```python
 resumo_tools = [
-{
-"tool": r.get("tool_name") or r.get("tool"),
-"ok": r.get("ok"),
-"status": r.get("status"),
-"evidence": r.get("evidence") or r.get("summary"),
-}
-for r in mcp_results]```
+    {
+        "tool": r.get("tool_name") or r.get("tool"),
+        "ok": r.get("ok"),
+        "status": r.get("status"),
+        "evidence": r.get("evidence") or r.get("summary"),
+    }
+    for r in mcp_results]
+```
 
 Then send only the necessary summary.
 
@@ -1120,45 +1123,45 @@ Use this standard as a reference:
 
 ```python
 system_content = apply_agent_profile_prompt(
-state,
-"""
-You are a corporate agent specializing in the financial domain.
-Use only evidence from business_context, MCP, and RAG.
-Do not invent a protocol, customer, contract, status, payment, or operational action.
-If mandatory data is missing, ask only for that data.
-Respond in a short, operational, and auditable manner.
-""".strip(),
+    state,
+    """
+    You are a corporate agent specializing in the financial domain.
+    Use only evidence from business_context, MCP, and RAG.
+    Do not invent a protocol, customer, contract, status, payment, or operational action.
+    If mandatory data is missing, ask only for that data.
+    Respond in a short, operational, and auditable manner.
+    """.strip(),
 )
 
 messages = [
-{
-"role": "system",
-"content": system_content,
-},
-{
-"role": "user",
-"content": (
-"User message:\n"
-f"{user_text}\n\n"
-"Summarized session context:\n"
-f"channel={session.get('channel')} tenant_id={session.get('tenant_id')}\n"
-f"global_session_id={session.get('global_session_id')}\n\n"
-"Business context:\n"
-f"customer_key={business_context.get('customer_key')}\n"
-f"contract_key={business_context.get('contract_key')}\n"
-f"interaction_key={business_context.get('interaction_key')}\n\n"
-"Intent and route:\n"
-f"intent={state.get('intent')} route={state.get('route')}\n\n"
-"MCP evidence:\n"
-f"{mcp_evidence}\n\n"
-"RAG context:\n"
-f"{rag_context or '[no RAG context]'}\n\n"
-"Expected format:\n"
-"1. Direct response to the user.\n"
-"2. Do not mention internal architecture details.\n"
-"3. If evidence was missing, clearly state what was missing."
-),
-},
+    {
+        "role": "system",
+        "content": system_content,
+    },
+    {
+        "role": "user",
+        "content": (
+            "User message:\n"
+            f"{user_text}\n\n"
+            "Summarized session context:\n"
+            f"channel={session.get('channel')} tenant_id={session.get('tenant_id')}\n"
+            f"global_session_id={session.get('global_session_id')}\n\n"
+            "Business context:\n"
+            f"customer_key={business_context.get('customer_key')}\n"
+            f"contract_key={business_context.get('contract_key')}\n"
+            f"interaction_key={business_context.get('interaction_key')}\n\n"
+            "Intent and route:\n"
+            f"intent={state.get('intent')} route={state.get('route')}\n\n"
+            "MCP evidence:\n"
+            f"{mcp_evidence}\n\n"
+            "RAG context:\n"
+            f"{rag_context or '[no RAG context]'}\n\n"
+            "Expected format:\n"
+            "1. Direct response to the user.\n"
+            "2. Do not mention internal architecture details.\n"
+            "3. If evidence was missing, clearly state what was missing."
+            ),
+    },
 ]
 ```
 
@@ -1289,13 +1292,13 @@ The agent can assemble MCP arguments without knowing all the details of the mapp
 
 ```python
 args = self.build_tool_arguments(
-state,
-tool_name="consultar_titulo_financeiro",
-intent=state.get("intent"),
-aliases={
-"customer_key": ["customer_id", "cpf", "cnpj"],
-"contract_key": ["contract_id", "invoice_id"],
-},
+    state,
+    tool_name="consultar_titulo_financeiro",
+    intent=state.get("intent"),
+    aliases={
+        "customer_key": ["customer_id", "cpf", "cnpj"],
+        "contract_key": ["contract_id", "invoice_id"],
+    },
 )
 ```
 
@@ -1327,17 +1330,18 @@ These tools must be declared with a policy in `config/tools.yaml`:
 
 ```yaml
 tools:
-registrar_acao_backoffice:
-description: Registers operational action in the backoffice.
-mcp_server: backoffice
-enabled: true
-tool_type: action
-requires: [protocol_id, action_text, operator_session]
-confirmation_required: false
-args_schema:
-protocol_id: string
-action_text: string
-operator_session: string
+tools:
+  registrar_acao_backoffice:
+    description: Registers operational action in the backoffice.
+    mcp_server: backoffice
+    enabled: true
+    tool_type: action
+    requires: [protocol_id, action_text, operator_session]
+    confirmation_required: false
+    args_schema:
+      protocol_id: string
+      action_text: string
+      operator_session: string
 ```
 
 With this, the framework is able to block the call before it reaches the MCP when a required field is missing:
@@ -1363,9 +1367,9 @@ The agent can run tools selected by the intent with:
 
 ```python
 mcp_results = await self.execute_tools_for_intent(
-state,
-tools=state.get("mcp_tools") or[],
-aliases=TOOL_ALIASES,
+    state,
+    tools=state.get("mcp_tools") or[],
+    aliases=TOOL_ALIASES,
 )
 ```
 
@@ -1390,11 +1394,11 @@ To prevent each agent from assembling prompts differently, the framework offers:
 
 ```python
 messages = self.build_messages(
-state,
-system_prompt=system_prompt,
-mcp_results=mcp_results,
-rag_context=rag_context,
-rag_metadata=rag_metadata,
+    state,
+    system_prompt=system_prompt,
+    mcp_results=mcp_results,
+    rag_context=rag_context,
+    rag_metadata=rag_metadata,
 )
 ```
 
@@ -1598,17 +1602,17 @@ A common utility function within the agent is a `pick()` with an explicit order 
 
 ```python
 def pick(name: str, *, tool_arguments, business_context, ctx, session, session_metadata, state):
-if name in tool_arguments:
-return tool_arguments.get(name)
-if isinstance(business_context, dict) and name in business_context:
-return business_context.get(name)
-if name in ctx:
-return ctx.get(name)
-if name in session:
-return session.get(name)
-if name in session_metadata:
-return session_metadata.get(name)
-return state.get(name)
+    if name in tool_arguments:
+        return tool_arguments.get(name)
+    if isinstance(business_context, dict) and name in business_context:
+        return business_context.get(name)
+    if name in ctx:
+        return ctx.get(name)
+    if name in session:
+        return session.get(name)
+    if name in session_metadata:
+        return session_metadata.get(name)
+    return state.get(name)
 ```
 
 This function makes it clear that the agent is not “guessing” where the data comes from. It is following a trust policy.
@@ -1619,17 +1623,17 @@ When there is an Agent Gateway / Global Supervisor, it can enrich the message be
 
 ```json
 {
-"session": {
-"global_session_id": "s1",
-"backend_session_id": "default:financeiro_agent:s1",
-"active_backend": "financeiro",
-"channel": "web",
-"tenant_id": "default",
-"metadata": {
-"selected_backend": "financeiro",
-"last_reason": "Backend chosen by rules: matches=[ 'pagamento']"
-}
-}
+    "session": {
+        "global_session_id": "s1",
+        "backend_session_id": "default:financeiro_agent:s1",
+        "active_backend": "financeiro",
+        "channel": "web",
+        "tenant_id": "default",
+        "metadata": {
+            "selected_backend": "financeiro",
+            "last_reason": "Backend chosen by rules: matches=[ 'pagamento']"
+        }
+    }
 }
 ```
 
@@ -1770,7 +1774,7 @@ In a simplified way:
 
 ```python
 def node(state):
-return {}
+    return {}
 ```
 
 In the framework, however, the real agent is a class with the `run()` method:
@@ -1789,13 +1793,13 @@ Add the method below within the `AgentWorkflow` class:
 
 ```python
 async def financeiro_agent(self, state):
-async with self.langgraph_telemetry.node("financeiro_agent", state):
-async with self.telemetry.span(
-"workflow.agent.financeiro",
-session_id=state.get("conversation_key") or state.get("session_id"),
-input={"intent": state.get("intent")},
-):
-return await self.financeiro.run(state)
+    async with self.langgraph_telemetry.node("financeiro_agent", state):
+    async with self.telemetry.span(
+        "workflow.agent.financeiro",
+        session_id=state.get("conversation_key") or state.get("session_id"),
+        input={"intent": state.get("intent")},
+    ):
+    return await self.financeiro.run(state)
 ```
 
 This method bridges the gap between:
@@ -1857,16 +1861,16 @@ In the`_build_graph()` method, locate:
 
 ```python
 builder.add_conditional_edges(
-"routing_decision",
-lambda s: s.get("route", "billing_agent"),
-{
-"billing_agent": "billing_agent",
-"product_agent": "product_agent",
-"orders_agent": "orders_agent",
-"support_agent": "support_agent",
-"handoff": "handoff",
-"supervisor_agent": "supervisor_agent",
-},
+    "routing_decision",
+    lambda s: s.get("route", "billing_agent"),
+    {
+        "billing_agent": "billing_agent",
+        "product_agent": "product_agent",
+        "orders_agent": "orders_agent",
+        "support_agent": "support_agent",
+        "handoff": "handoff",
+        "supervisor_agent": "supervisor_agent",
+    },
 )
 ```
 
@@ -1880,17 +1884,17 @@ The complete block looks like this:
 
 ```python
 builder.add_conditional_edges(
-"routing_decision",
-lambda s: s.get("route", "billing_agent"),
-{
-"billing_agent": "billing_agent",
-"product_agent": "product_agent",
-"orders_agent": "orders_agent",
-"support_agent": "support_agent",
-"financeiro_agent": "financeiro_agent",
-"handoff": "handoff",
-"supervisor_agent": "supervisor_agent",
-},
+    "routing_decision",
+    lambda s: s.get("route", "billing_agent"),
+    {
+        "billing_agent": "billing_agent",
+        "product_agent": "product_agent",
+        "orders_agent": "orders_agent",
+        "support_agent": "support_agent",
+        "financeiro_agent": "financeiro_agent",
+        "handoff": "handoff",
+        "supervisor_agent": "supervisor_agent",
+    },
 )
 ```
 
@@ -2075,8 +2079,8 @@ intents:
    - duplicate
    - due date
    - collection
-   - dispute
-      ```
+   - dispute      
+```
 
 The relationship needs to look like this:
 
@@ -2115,10 +2119,10 @@ In the `supervisor_agent()` method, locate the handlers map:
 
 ```python
 handlers = {
-"billing_agent": self.billing.run,
-"product_agent": self.product.run,
-"orders_agent": self.orders.run,
-"support_agent": self.support.run,
+    "billing_agent": self.billing.run,
+    "product_agent": self.product.run,
+    "orders_agent": self.orders.run,
+    "support_agent": self.support.run,
 }
 ```
 
@@ -2132,11 +2136,11 @@ The final block looks like this:
 
 ```python
 handlers = {
-"billing_agent": self.billing.run,
-"product_agent": self.product.run,
-"orders_agent": self.orders.run,
-"support_agent": self.support.run,
-"financeiro_agent": self.financeiro.run,
+    "billing_agent": self.billing.run,
+    "product_agent": self.product.run,
+    "orders_agent": self.orders.run,
+    "support_agent": self.support.run,
+    "financeiro_agent": self.financeiro.run,
 }
 ```
 
@@ -2318,9 +2322,10 @@ Example:
 
 ```python
 class AgentState(TypedDict, total=False):
-# existing fields...
-financial_context: dict[ str, Any]
-financial_decision: dict[ str, Any]```
+    # existing fields...
+    financial_context: dict[ str, Any]
+    financial_decision: dict[ str, Any]
+```
 
 ### 7.3. Decision criteria
 
@@ -2519,7 +2524,7 @@ intents:
    - I want to check my payment.
    - I need a duplicate of the payment slip.
    - My payment has not yet been processed.
-      ```
+```
 
 ### 10.3. What does `mcp_tools` mean in the intent?
 
@@ -2603,20 +2608,20 @@ Add:
 
 ```yaml
 tools:
-consultar_titulo_financeiro:
-description: Consults a financial security by customer and contract.
-mcp_server: financeiro
-enabled: true
-args_schema:
-customer_id: string
-contract_id: string
+  consultar_titulo_financeiro:
+    description: Consults a financial security by customer and contract.
+    mcp_server: financeiro
+    enabled: true
+    args_schema:
+      customer_id: string
+      contract_id: string
 
-consultar_pagamentos_financeiro:
-description: Consults financial payments by customer.
-mcp_server: financeiro
-enabled: true
-args_schema:
-customer_id: string
+  consultar_pagamentos_financeiro:
+    description: Consults financial payments by customer.
+    mcp_server: financeiro
+    enabled: true
+    args_schema:
+      customer_id: string
 ```
 
 ### 11.3. How to think about a tool
@@ -2667,11 +2672,12 @@ Example:
 
 ```yaml
 servers:
-financeiro:
-transport: http
-endpoint: http://localhost:8300/mcp
-enabled: true
-description: Local Finance MCP Server.
+  financeiro:
+    transport: http
+    endpoint: http://localhost:8300/mcp
+    enabled: true
+    description: Local Finance MCP Server.
+
 ```
 
 ### 12.3. Configuration in Docker Compose
@@ -2686,11 +2692,11 @@ Example:
 
 ```yaml
 servers:
-financeiro:
-transport: http
-endpoint: http://financeiro-mcp:8300/mcp
-enabled: true
-description: Financeiro MCP Server in Docker.
+  financeiro:
+    transport: http
+    endpoint: http://financeiro-mcp:8300/mcp
+    enabled: true
+    description: Financeiro MCP Server in Docker.
 ```
 
 ### 12.4. How to avoid a common endpoint error
@@ -2744,19 +2750,19 @@ config/mcp_parameter_mapping.yaml
 
 ```yaml
 mcp_parameter_mapping:
-defaults:
-use_mock: true
-tools:
-consultar_titulo_financeiro:
-map:
-customer_key: customer_id
-contract_key: contract_id
-interaction_key: interaction_id
-session_key: session_id
-consultar_pagamentos_financeiro:
-map:
-customer_key: customer_id
-session_key: session_id
+  defaults:
+    use_mock: true
+  tools:
+    consultar_titulo_financeiro:
+      map:
+        customer_key: customer_id
+        contract_key: contract_id
+        interaction_key: interaction_id
+        session_key: session_id
+    consultar_pagamentos_financeiro:
+      map:
+        customer_key: customer_id
+        session_key: session_id
 ```
 
 Interpretation:
@@ -2829,15 +2835,15 @@ Bad example:
 
 ```python
 customer_key = (
-request.get("msisdn")
-or request.get("cpf")
-or request.get("customer_id")
+    request.get("msisdn")
+    or request.get("cpf")
+    or request.get("customer_id")
 )
 
 contract_key = (
-request.get("invoice_id")
-or request.get("account_id")
-or request.get("order_id")
+    request.get("invoice_id")
+    or request.get("account_id")
+    or request.get("order_id")
 )
 ```
 
@@ -2893,16 +2899,16 @@ interaction_key=301953872
 
 ```yaml
 identity:
-aliases:
-customer_key:
-- customer_key
-- customer_id
-- client_id
-- cpf
-- cnpj
-- msisdn
-- phone_number
-- document_number
+  aliases:
+    customer_key:
+      - customer_key
+      - customer_id
+      - client_id
+      - cpf
+      - cnpj
+      - msisdn
+      - phone_number
+      - document_number
 
     contract_key:
       - contract_key
@@ -2968,9 +2974,9 @@ Example:
 
 ```yaml
 customer_key:
-- msisdn
-- cpf
-- customer_id
+  - msisdn
+  - cpf
+  - customer_id
    ```
 
 Input:
@@ -3010,9 +3016,9 @@ Example:
 
 ```yaml
 contract_key:
-- invoice_id
-- contract_id
-- order_id
+  - invoice_id
+  - contract_id
+  - order_id
    ```
 
 Input:
@@ -3052,9 +3058,9 @@ Example:
 
 ```yaml
 interaction_key:
-- ura_call_id
-- protocol
-- ticket_id
+  - ura_call_id
+  - protocol
+  - ticket_id
    ```
 
 Input:
@@ -3092,15 +3098,15 @@ Example:
 
 ```yaml
 account_key:
-- billing_account
-- billing_account_id
+  - billing_account
+  - billing_account_id
    ```
 
 Input:
 
 ```json
 {
-"billing_account_id": "BA-10001"
+  "billing_account_id": "BA-10001"
 }
 ```
 
@@ -3108,7 +3114,7 @@ Internal result:
 
 ```json
 {
-"account_key": "BA-10001"
+  "account_key": "BA-10001"
 }
 ```
 
@@ -3131,15 +3137,15 @@ Example:
 
 ```yaml
 resource_key:
-- product_id
-- service_id
+  - product_id
+  - service_id
    ```
 
 Input:
 
 ```json
 {
-"product_id": "VAS-001"
+  "product_id": "VAS-001"
 }
 ```
 
@@ -3147,7 +3153,7 @@ Internal result:
 
 ```json
 {
-"resource_key": "VAS-001"
+  "resource_key": "VAS-001"
 }
 ```
 
@@ -3170,15 +3176,15 @@ Example:
 
 ```yaml
 session_key:
-- session_id
-- conversation_id
+  - session_id
+  - conversation_id
    ```
 
 Input:
 
 ```json
 {
-"session_id": "default:telecom_contas:abc-123"
+  "session_id": "default:telecom_contas:abc-123"
 }
 ```
 
@@ -3186,7 +3192,7 @@ Internal result:
 
 ```json
 {
-"session_key": "default:telecom_contas:abc-123"
+  "session_key": "default:telecom_contas:abc-123"
 }
 ```
 
@@ -3198,13 +3204,13 @@ Input received by the gateway:
 
 ```json
 {
-"channel": "web",
-"agent": "telecom_contas",
-"message": "I want to check my invoice",
-"msisdn": "11999999999",
-"invoice_id": "3000131180",
-"ura_call_id": "301953872",
-"use_mock": true
+    "channel": "web",
+    "agent": "telecom_contas",
+    "message": "I want to check my invoice",
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872",
+    "use_mock": true
 }
 ```
 
@@ -3212,16 +3218,16 @@ After applying `identity.yaml`, the framework assembles the following `BusinessC
 
 ```json
 {
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872",
-"account_key": null,
-"resource_key": null,
-"session_key": "default:telecom_contas:abc-123",
-"metadata": {
-"channel": "web",
-"agent": "telecom_contas",
-"use_mock": true
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "account_key": null,
+    "resource_key": null,
+    "session_key": "default:telecom_contas:abc-123",
+    "metadata": {
+    "channel": "web",
+    "agent": "telecom_contas",
+    "use_mock": true
 }
 }
 ```
@@ -3309,9 +3315,9 @@ Example:
 
 ```yaml
 customer_key:
-- msisdn
-- cpf
-- customer_id
+  - msisdn
+  - cpf
+  - customer_id
    ```
 
 This means:
@@ -3361,9 +3367,9 @@ Input:
 
 ```json
 {
-"msisdn": "11999999999",
-"invoice_id": "3000131180",
-"ura_call_id": "301953872"
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872"
 }
 ```
 
@@ -3371,9 +3377,9 @@ Configuration in `identity.yaml`:
 
 ```yaml
 identity:
-aliases:
-customer_key:
-- msisdn
+  aliases:
+    customer_key:
+      - msisdn
 
     contract_key:
       - invoice_id
@@ -3386,9 +3392,9 @@ Internal result:
 
 ```json
 {
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872"
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872"
 }
 ```
 
@@ -3412,9 +3418,9 @@ Input:
 
 ```json
 {
-"customer_id": "C100",
-"order_id": "ORD900",
-"ticket_id": "T555"
+    "customer_id": "C100",
+    "order_id": "ORD900",
+    "ticket_id": "T555"
 }
 ```
 
@@ -3422,11 +3428,11 @@ The same `identity.yaml` can have:
 
 ```yaml
 identity:
-aliases:
-customer_key:
-- msisdn
-- cpf
-- customer_id
+  aliases:
+    customer_key:
+      - msisdn
+      - cpf
+      - customer_id
 
     contract_key:
       - invoice_id
@@ -3443,9 +3449,9 @@ Internal result:
 
 ```json
 {
-"customer_key": "C100",
-"contract_key": "ORD900",
-"interaction_key": "T555"
+    "customer_key": "C100",
+    "contract_key": "ORD900",
+    "interaction_key": "T555"
 }
 ```
 
@@ -3526,8 +3532,8 @@ If a new channel starts sending `phone_number` instead of `msisdn`, just add the
 
 ```yaml
 customer_key:
-- msisdn
-- phone_number
+  - msisdn
+  - phone_number
    ```
 
 There is no need to change the agent code.
@@ -3542,14 +3548,14 @@ Avoid creating very specific internal fields, such as:
 
 ```yaml
 msisdn_key:
-- msisdn
+  - msisdn
    ```
 
 Instead, use:
 
 ```yaml
 customer_key:
-- msisdn
+  - msisdn
    ```
 
 Because `customer_key` works for any domain.
@@ -3562,7 +3568,7 @@ Avoid this:
 
 ```yaml
 consult_invoice:
-msisdn: customer_key
+  msisdn: customer_key
 ```
 
 This type of configuration belongs to `mcp_parameter_mapping.yaml`.
@@ -3577,19 +3583,19 @@ Good example:
 
 ```yaml
 customer_key:
-- msisdn
-- cpf
-- customer_id
-- client_id
+  - msisdn
+  - cpf
+  - customer_id
+  - client_id
    ```
 
 Less recommended example:
 
 ```yaml
 customer_key:
-- tim_msisdn
-- banco_cpf
-- retail_customer_id
+  - tim_msisdn
+  - banco_cpf
+  - retail_customer_id
    ```
 
 Unless the channel actually sends those specific names.
@@ -3604,18 +3610,18 @@ Example:
 
 ```yaml
 customer_key:
-- customer_key
-- customer_id
-- msisdn
-- cpf
+  - customer_key
+  - customer_id
+  - msisdn
+  - cpf
    ```
 
 If the input contains:
 
 ```json
 {
-"customer_key": "C999",
-"msisdn": "11999999999"
+    "customer_key": "C999",
+    "msisdn": "11999999999"
 }
 ```
 
@@ -3623,7 +3629,7 @@ It is recommended to prioritize the first alias in the list:
 
 ```json
 {
-"customer_key": "C999"
+    "customer_key": "C999"
 }
 ```
 
@@ -3654,18 +3660,19 @@ Use:
 
 ```python
 payload = {
-"msisdn": "11999999999",
-"invoice_id": "3000131180",
-"ura_call_id": "301953872"
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872"
 }
 
 identity_config = {
-"identity": {
-"aliases": {
-"customer_key": ["customer_key", "msisdn", "cpf"],
-"contract_key": ["contract_key", "invoice_id"],
-"interaction_key": ["interaction_key", "ura_call_id"]}
-}
+    "identity": {
+        "aliases": {
+            "customer_key": ["customer_key", "msisdn", "cpf"],
+            "contract_key": ["contract_key", "invoice_id"],
+            "interaction_key": ["interaction_key", "ura_call_id"]
+        }
+    }
 }
 
 resolved = resolve_identity(payload, identity_config)
@@ -3677,9 +3684,9 @@ Result:
 
 ```json
 {
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872"
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872"
 }
 ```
 
@@ -3691,17 +3698,17 @@ After the identity is resolved, the framework can assemble the `BusinessContext`
 
 ```python
 business_context = BusinessContext(
-customer_key=resolved.get("customer_key"),
-contract_key=resolved.get("contract_key"),
-interaction_key=resolved.get("interaction_key"),
-account_key=resolved.get("account_key"),
-resource_key=resolved.get("resource_key"),
-session_key=resolved.get("session_key") or generated_session_id,
-metadata={
-"channel": payload.get("channel"),
-"agent": payload.get("agent"),
-"use_mock": payload.get("use_mock")
-}
+    customer_key=resolved.get("customer_key"),
+    contract_key=resolved.get("contract_key"),
+    interaction_key=resolved.get("interaction_key"),
+    account_key=resolved.get("account_key"),
+    resource_key=resolved.get("resource_key"),
+    session_key=resolved.get("session_key") or generated_session_id,
+    metadata={
+        "channel": payload.get("channel"),
+        "agent": payload.get("agent"),
+        "use_mock": payload.get("use_mock")
+    }
 )
 ```
 
@@ -3715,24 +3722,24 @@ After normalization, the LangGraph state may contain:
 
 ```json
 {
-"messages": [
-{
-"role": "user",
-"content": "I want to check my bill"
-}],
-"business_context": {
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872",
-"account_key": null,
-"resource_key": null,
-"session_key": "default:telecom_contas:abc-123",
-"metadata": {
-"channel": "web",
-"agent": "telecom_contas",
-"use_mock": true
-}
-}
+    "messages": [
+        {
+        "role": "user",
+        "content": "I want to check my bill"
+        }],
+    "business_context": {
+        "customer_key": "11999999999",
+        "contract_key": "3000131180",
+        "interaction_key": "301953872",
+        "account_key": null,
+        "resource_key": null,
+        "session_key": "default:telecom_contas:abc-123",
+        "metadata": {
+            "channel": "web",
+            "agent": "telecom_contas",
+            "use_mock": true
+        }
+    }
 }
 ```
 
@@ -3772,52 +3779,52 @@ config/identity.yaml
 
 ```yaml
 identity:
-version: "2"
-required:
-- session_key
-keys:
-customer_key:
-description: Canonical customer.
-sources:
-- business_context.customer_key
-- context.business_context.customer_key
-- context.session.metadata.customer_key
-- customer_key
-- customer_id
-- cpf
-- cnpj
-- user_id
-contract_key:
-description: Contract, order, invoice or main title.
-sources:
-- business_context.contract_key
-- context.business_context.contract_key
-- context.session.metadata.contract_key
-- contract_key
-- contract_id
-- invoice_id
-- order_id
-interaction_key:
-description: External interaction key.
-sources:
-- business_context.interaction_key
-- context.business_context.interaction_key
-- context.session.metadata.interaction_key
-- interaction_key
-- call_id
-- message_id
-- protocol_id
-session_key:
-description: Stable technical session.
-sources:
-- business_context.session_key
-- context.business_context.session_key
-- context.session.backend_session_id
-- context.session.global_session_id
-- context.session.metadata.session_key
-- session_key
-- conversation_key
-- session_id
+  version: "2"
+  required:
+    - session_key
+  keys:
+    customer_key:
+      description: Canonical customer.
+      sources:
+        - business_context.customer_key
+        - context.business_context.customer_key
+        - context.session.metadata.customer_key
+        - customer_key
+        - customer_id
+        - cpf
+        - cnpj
+        - user_id
+    contract_key:
+      description: Contract, order, invoice or main title.
+      sources:
+        - business_context.contract_key
+        - context.business_context.contract_key
+        - context.session.metadata.contract_key
+        - contract_key
+        - contract_id
+        - invoice_id
+        - order_id
+    interaction_key:
+      description: External interaction key.
+      sources:
+        - business_context.interaction_key
+        - context.business_context.interaction_key
+        - context.session.metadata.interaction_key
+        - interaction_key
+        - call_id
+        - message_id
+        - protocol_id
+    session_key:
+      description: Stable technical session.
+      sources:
+        - business_context.session_key
+        - context.business_context.session_key
+        - context.session.backend_session_id
+        - context.session.global_session_id
+        - context.session.metadata.session_key
+        - session_key
+        - conversation_key
+        - session_id
 ```
 
 ### 14.3. How to think about identity
@@ -3860,9 +3867,9 @@ For example, in the case of Accounts, the frontend can send:
 
 ```json
 {
-"msisdn": "11999999999",
-"invoice_id": "3000131180",
-"ura_call_id": "301953872"
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872"
 }
 ```
 
@@ -3870,9 +3877,9 @@ But another domain could send:
 
 ```json
 {
-"cpf": "12345678900",
-"contract_id": "ABC123",
-"protocol": "P987654"
+    "cpf": "12345678900",
+    "contract_id": "ABC123",
+    "protocol": "P987654"
 }
 ```
 
@@ -3880,9 +3887,9 @@ And yet another domain could use:
 
 ```json
 {
-"customer_id": "CUST-001",
-"order_id": "ORD-789",
-"ticket_id": "TCK-555"
+    "customer_id": "CUST-001",
+    "order_id": "ORD-789",
+    "ticket_id": "TCK-555"
 }
 ```
 
@@ -3972,13 +3979,13 @@ Imagine that the frontend sends this request:
 
 ```json
 {
-"channel": "web",
-"message": "I want to check my invoice",
-"agent": "telecom_contas",
-"msisdn": "11999999999",
-"invoice_id": "3000131180",
-"ura_call_id": "301953872",
-"use_mock": true
+    "channel": "web",
+    "message": "I want to check my invoice",
+    "agent": "telecom_contas",
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872",
+    "use_mock": true
 }
 ```
 
@@ -3995,17 +4002,17 @@ Therefore, the request is standardized for a `BusinessContext`:
 
 ```python
 BusinessContext(
-customer_key="11999999999",
-contract_key="3000131180",
-interaction_key="301953872",
-account_key=None,
-resource_key=None,
-session_key="default:telecom_contas:abc-123",
-metadata={
-"channel": "web",
-"frontend": "agent_frontend",
-"use_mock": True
-}
+    customer_key="11999999999",
+    contract_key="3000131180",
+    interaction_key="301953872",
+    account_key=None,
+    resource_key=None,
+    session_key="default:telecom_contas:abc-123",
+    metadata={
+        "channel": "web",
+        "frontend": "agent_frontend",
+        "use_mock": True
+    }
 )
 ```
 
@@ -4086,21 +4093,21 @@ Conceptual example:
 
 ```python
 state = {
-"messages": [
-{
-"role": "user",
-"content": "I want to check my bill"
-}],
-"business_context": {
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872",
-"session_key": "default:telecom_contas:abc-123",
-"metadata": {
-"channel": "web",
-"use_mock": True
-}
-}
+    "messages": [
+        {
+        "role": "user",
+        "content": "I want to check my bill"
+        }],
+    "business_context": {
+        "customer_key": "11999999999",
+        "contract_key": "3000131180",
+        "interaction_key": "301953872",
+        "session_key": "default:telecom_contas:abc-123",
+        "metadata": {
+            "channel": "web",
+            "use_mock": True
+        }
+    }
 }
 ```
 
@@ -4109,7 +4116,8 @@ From that moment on, any LangGraph node can access the context:
 ```python
 state[ "business_context"]["customer_key"]
 state[ "business_context"]["contract_key"]
-state[ "business_context"]["interaction_key"]```
+state[ "business_context"]["interaction_key"]
+```
 
 However, in a cleaner architecture, the agent does not need to directly manipulate these fields. Ideally, the `Agent Runtime`, the `MCP Tool Router`, and the `Parameter Mapper` should do this.
 
@@ -4132,9 +4140,10 @@ Conceptual example:
 
 ```python
 agent_runtime.execute(
-messages=state[ "messages"],
-business_context=state[ "business_context"],
-session_id=state[ "session_id"])
+    messages=state[ "messages"],
+    business_context=state[ "business_context"],
+    session_id=state[ "session_id"]
+)
 ```
 
 During execution, the agent may decide to call a tool.
@@ -4143,10 +4152,10 @@ Example:
 
 ```json
 {
-"tool": "consultar_fatura",
-"arguments": {
-"competencia": "atual"
-}
+    "tool": "consultar_fatura",
+    "arguments": {
+      "competencia": "atual"
+    }
 }
 ```
 
@@ -4156,14 +4165,14 @@ The runtime or tool router complements the arguments using `BusinessContext`:
 
 ```json
 {
-"tool": "consultar_fatura",
-"arguments": {
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872",
-"session_key": "default:telecom_contas:abc-123",
-"competencia": "atual"
-}
+    "tool": "consultar_fatura",
+    "arguments": {
+        "customer_key": "11999999999",
+        "contract_key": "3000131180",
+        "interaction_key": "301953872",
+        "session_key": "default:telecom_contas:abc-123",
+        "competencia": "atual"
+    }
 }
 ```
 
@@ -4214,10 +4223,10 @@ The framework uses:
 
 ```json
 {
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872",
-"session_key": "default:telecom_contas:abc-123"
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "session_key": "default:telecom_contas:abc-123"
 }
 ```
 
@@ -4225,10 +4234,10 @@ But the telecom MCP Server can wait for:
 
 ```json
 {
-"msisdn": "11999999999",
-"invoice_id": "3000131180",
-"ura_call_id": "301953872",
-"session_id": "default:telecom_contas:abc-123"
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872",
+    "session_id": "default:telecom_contas:abc-123"
 }
 ```
 
@@ -4238,16 +4247,16 @@ Configuration example:
 
 ```yaml
 mcp_parameter_mapping:
-defaults:
-use_mock: true
+  defaults:
+    use_mock: true
 
-tools:
-consult_invoice:
-map:
-customer_key: msisdn
-contract_key: invoice_id
-interaction_key: ura_call_id
-session_key: session_id
+  tools:
+    consultar_fatura:
+      map:
+        customer_key: msisdn
+        contract_key: invoice_id
+        interaction_key: ura_call_id
+        session_key: session_id
 
     consultar_pagamentos:
       map:
@@ -4356,52 +4365,52 @@ participant Tool as consultar_fatura
 
 ```json
 {
-"channel": "web",
-"session_id": "default:telecom_contas:abc-123",
-"message": "I want to check my invoice",
-"msisdn": "11999999999",
-"invoice_id": "3000131180",
-"ura_call_id": "301953872",
-"use_mock": true
+    "channel": "web",
+    "session_id": "default:telecom_contas:abc-123",
+    "message": "I want to check my invoice",
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872",
+    "use_mock": true
 }
 ```
 
 #### 14.3.15.2. BusinessContext generated
 
 ```json
-{
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872",
-"account_key": null,
-"resource_key": null,
-"session_key": "default:telecom_contas:abc-123",
-"metadata": {
-"channel": "web",
-"use_mock": true
-}
+    {
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "account_key": null,
+    "resource_key": null,
+    "session_key": "default:telecom_contas:abc-123",
+    "metadata": {
+        "channel": "web",
+        "use_mock": true
+    }
 }
 ```
 
 #### 14.3.15.3. State sent to LangGraph
 
 ```json
-{
-"messages": [
-{
-"role": "user",
-"content": "I want to check my invoice"
-}],
-"business_context": {
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872",
-"session_key": "default:telecom_contas:abc-123",
-"metadata": {
-"channel": "web",
-"use_mock": true
-}
-}
+    {
+    "messages": [
+        {
+            "role": "user",
+            "content": "I want to check my invoice"
+        }],
+    "business_context": {
+        "customer_key": "11999999999",
+        "contract_key": "3000131180",
+        "interaction_key": "301953872",
+        "session_key": "default:telecom_contas:abc-123",
+        "metadata": {
+            "channel": "web",
+            "use_mock": true
+        }
+    }
 }
 ```
 
@@ -4409,10 +4418,10 @@ participant Tool as consultar_fatura
 
 ```json
 {
-"tool": "consultar_fatura",
-"arguments": {
-"competencia": "atual"
-}
+    "tool": "consultar_fatura",
+    "arguments": {
+      "competencia": "atual"
+    }
 }
 ```
 
@@ -4420,14 +4429,14 @@ participant Tool as consultar_fatura
 
 ```json
 {
-"tool": "consultar_fatura",
-"arguments": {
-"customer_key": "11999999999",
-"contract_key": "3000131180",
-"interaction_key": "301953872",
-"session_key": "default:telecom_contas:abc-123",
-"competencia": "atual"
-}
+    "tool": "consultar_fatura",
+    "arguments": {
+        "customer_key": "11999999999",
+        "contract_key": "3000131180",
+        "interaction_key": "301953872",
+        "session_key": "default:telecom_contas:abc-123",
+        "competencia": "atual"
+    }
 }
 ```
 
@@ -4435,15 +4444,15 @@ participant Tool as consultar_fatura
 
 ```json
 {
-"tool": "consultar_fatura",
-"arguments": {
-"msisdn": "11999999999",
-"invoice_id": "3000131180",
-"ura_call_id": "301953872",
-"session_id": "default:telecom_contas:abc-123",
-"competencia": "atual",
-"use_mock": true
-}
+    "tool": "consultar_fatura",
+    "arguments": {
+        "msisdn": "11999999999",
+        "invoice_id": "3000131180",
+        "ura_call_id": "301953872",
+        "session_id": "default:telecom_contas:abc-123",
+        "competencia": "atual",
+        "use_mock": true
+    }
 }
 ```
 
@@ -4719,21 +4728,21 @@ Conceptual example:
 
 ```python
 async def consultar_titulo_financeiro(customer_id: str, contract_id: str, session_id: str | None = None):
-return {
-"customer_id": customer_id,
-"contract_id": contract_id,
-"status": "OPEN",
-"amount": 129.90,
-"due date": "2026-06-20",
-}
+    return {
+        "customer_id": customer_id,
+        "contract_id": contract_id,
+        "status": "OPEN",
+        "amount": 129.90,
+        "due date": "2026-06-20",
+    }
 
 
 async def consultar_pagamentos_financeiro(customer_id: str, session_id: str | None = None):
-return {
-"customer_id": customer_id,
-"pagamentos": [
-{"data": "2026-06-01", "valor": 129.90, "status": "COMPENSADO"}],
-}
+    return {
+        "customer_id": customer_id,
+        "pagamentos": [
+            {"data": "2026-06-01", "valor": 129.90, "status": "COMPENSADO"}],
+    }
 ```
 
 ### 15.3. Criteria for mock versus real
@@ -4783,10 +4792,10 @@ Example:
 
 ```python
 await self._emit_ic(
-"IC.FINANCEIRO_AGENT_STARTED",
-state,
-{"business_component": "financeiro"},
-component="agent.financeiro.start",
+    "IC.FINANCEIRO_AGENT_STARTED",
+    state,
+    {"business_component": "financeiro"},
+    component="agent.financeiro.start",
 )
 ```
 
@@ -4810,14 +4819,14 @@ Example:
 
 ```python
 await self.observer.emit_noc(
-"NOC.FINANCEIRO_TOOL_TIMEOUT",
-{
-"session_id": state.get("conversation_key") or state.get("session_id"),
-"tenant_id": state.get("tenant_id"),
-"agent_id": state.get("agent_id"),
-"tool": "consultar_titulo_financeiro",
-},
-component="agent.financeiro.tool",
+    "NOC.FINANCEIRO_TOOL_TIMEOUT",
+    {
+        "session_id": state.get("conversation_key") or state.get("session_id"),
+        "tenant_id": state.get("tenant_id"),
+        "agent_id": state.get("agent_id"),
+        "tool": "consultar_titulo_financeiro",
+    },
+    component="agent.financeiro.tool",
 )
 ```
 
@@ -5050,28 +5059,28 @@ Simplified example:
 
 ```yaml
 services:
-backend:
-build:
-context: .
-dockerfile: agent_template_backend/Dockerfile
-env_file:
-- agent_template_backend/.env
-ports:
-- "8000:8000"
-depends_on:
-- redis
-- financeiro-mcp
+  backend:
+    build:
+      context: .
+      dockerfile: agent_template_backend/Dockerfile
+    env_file:
+      - agent_template_backend/.env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+      - financeiro-mcp
 
-redis:
-image: redis:7
-ports:
-- "6379:6379"
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
 
-financeiro-mcp:
-build:
-context: ./mcp_servers/financeiro_mcp_server
-ports:
-- "8300:8300"
+  financeiro-mcp:
+    build:
+      context: ./mcp_servers/financeiro_mcp_server
+    ports:
+      - "8300:8300"
 ```
 
 When in Docker, use `config/mcp_servers.docker.yaml` and adjust the `.env`:
@@ -5108,18 +5117,18 @@ The response must contain metadata such as:
 
 ```json
 {
-"channel": "web",
-"session_id": "default:financeiro_agent:teste-financeiro-001",
-"text": "...",
-"metadata": {
-"route": "financeiro_agent",
-"intent": "financeiro_pagamentos",
-"mcp_results":[],
-"business_context": {
-"customer_key": "12345",
-"contract_key": "ABC-999"
-}
-}
+    "channel": "web",
+    "session_id": "default:financeiro_agent:teste-financeiro-001",
+    "text": "...",
+    "metadata": {
+        "route": "financeiro_agent",
+        "intent": "financeiro_pagamentos",
+        "mcp_results":[],
+        "business_context": {
+            "customer_key": "12345",
+            "contract_key": "ABC-999"
+        }
+    }
 }
 ```
 
@@ -5796,44 +5805,44 @@ agent_gateway/config/backends.yaml
 Example:
 
 ```yaml
-default_backend: bills
+default_backend: contas
 
 backends:
-contas:
-url: http://localhost:8001
-description: Backend responsible for invoices, bills, payments, usage, duplicate, and disputes.
-domains: [contas, fatura, pagamento, consumo, contestacao]
-keywords: [fatura, conta, boleto, pagamento, consumo, segunda via, contestar, contestação, valor, cobrança]
-examples:
-- I want to check my invoice
-- My bill is high
-- I need a duplicate of the payment slip
-priority: 10
-default_agent_id: telecom_contas
+  accounts:
+    url: http://localhost:8001
+    description: Backend responsible for invoices, bills, payments, usage, duplicate, and disputes.
+    domains: [contas, fatura, pagamento, consumo, contestacao]
+    keywords: [fatura, conta, boleto, pagamento, consumo, segunda via, contestar, contestação, valor, cobrança]
+    examples:
+      - I want to check my invoice
+      - My bill is high
+      - I need a duplicate of the payment slip
+    priority: 10
+    default_agent_id: telecom_contas
 
-offers:
-url: http://localhost:8002
-description: Backend responsible for offers, plans, upgrades, retention and contracting.
-domains: [offers, plans, retention, contracting]
-keywords: [offer, plan, contract, upgrade, discount, promotion, package, retention, cancel service]
-examples:
-- I want to change my plan
-- Do you have any offers for me?
-- I want to cancel a service
-priority: 20
-default_agent_id: telecom_ofertas
+  offers:
+    url: http://localhost:8002
+    description: Backend responsible for offers, plans, upgrades, retention and contracting.
+    domains: [ofertas, planos, retenção, contratação]
+    keywords: [oferta, plano, contratar, upgrade, desconto, promoção, pacote, retenção, cancelar serviço]
+    examples:
+      - I want to change my plan
+      - Do you have any offers for me?
+      - I want to cancel a service
+    priority: 20
+    default_agent_id: telecom_ofertas
 
-support:
-url: http://localhost:8003
-description: Backend responsible for technical support, outages, network, internet and operational service.
-domains: [support, technical, network, internet]
-keywords: [internet, signal, network, support, technical, problem, outage, no connection, modem]
-examples:
-- My internet is slow
-- I have no signal
-- I need technical support
-priority: 30
-default_agent_id: telecom_support
+  support:
+    url: http://localhost:8003
+    description: Backend responsible for technical support, outages, network, internet and operational service.
+    domains: [suporte, técnico, rede, internet]
+    keywords: [internet, sinal, rede, suporte, técnico, problema, falha, sem conexão, modem]
+    examples:
+      - My internet is slow
+      - I have no signal
+      - I need technical support
+    priority: 30
+    default_agent_id: telecom_suporte
 ```
 
 The developer should not fill in this YAML as a random list of words. They should think **of intent families**.
@@ -5904,12 +5913,12 @@ The Gateway code adjusts the response to keep both identifiers in the `metadata`
 
 ```json
 {
-"session_id": "s1",
-"metadata": {
-"global_session_id": "s1",
-"backend_session_id": "default:telecom_contas:s1",
-"selected_backend": "contas"
-}
+    "session_id": "s1",
+    "metadata": {
+        "global_session_id": "s1",
+        "backend_session_id": "default:telecom_contas:s1",
+        "selected_backend": "contas"
+    }
 }
 ```
 
@@ -5923,31 +5932,31 @@ Example of a conceptual payload that reaches the backend:
 
 ```json
 {
-"channel": "web",
-"tenant_id": "default",
-"agent_id": "financeiro_agent",
-"payload": {
-"text": "I want to check my payment",
-"session_id": "s1",
-"customer_id": "12345"
-},
-"context": {
-"session": {
-"global_session_id": "s1",
-"backend_session_id": "default:financeiro_agent:s1",
-"active_backend": "financeiro",
-"channel": "web",
-"tenant_id": "default",
-"metadata": {
-"selected_backend": "financeiro",
-"route_confidence": 0.82
-}
-},
-"business_context": {
-"customer_key": "12345",
-"session_key": "default:financeiro_agent:s1"
-}
-}
+    "channel": "web",
+    "tenant_id": "default",
+    "agent_id": "financeiro_agent",
+    "payload": {
+        "text": "I want to check my payment",
+        "session_id": "s1",
+        "customer_id": "12345"
+    },
+    "context": {
+        "session": {
+            "global_session_id": "s1",
+            "backend_session_id": "default:financeiro_agent:s1",
+            "active_backend": "financeiro",
+            "channel": "web",
+            "tenant_id": "default",
+            "metadata": {
+                "selected_backend": "financeiro",
+                "route_confidence": 0.82
+          }
+        },
+        "business_context": {
+            "customer_key": "12345",
+            "session_key": "default:financeiro_agent:s1"
+        }
+    }
 }
 ```
 
@@ -5989,11 +5998,11 @@ Expected response:
 
 ```json
 {
-"status": "ok",
-"app": "agent-gateway-global-supervisor",
-"routing_mode": "hybrid",
-"backends": ["accounts", "offers", "support"],
-"llm_provider": "mock"
+    "status": "ok",
+    "app": "agent-gateway-global-supervisor",
+    "routing_mode": "hybrid",
+    "backends": ["accounts", "offers", "support"],
+    "llm_provider": "mock"
 }
 ```
 
@@ -6049,9 +6058,9 @@ Expected result:
 
 ```json
 {
-"backend_id": "accounts",
-"confidence": 0.8,
-"reason": "Backend chosen by rules: matches=[ 'invoice']"
+    "backend_id": "accounts",
+    "confidence": 0.8,
+    "reason": "Backend chosen by rules: matches=[ 'invoice']"
 }
 ```
 
@@ -6115,9 +6124,9 @@ The Accounts backend can respond with metadata requesting a handoff:
 
 ```json
 {
-"metadata": {
-"handover_backend": "offers"
-}
+    "metadata": {
+      "handover_backend": "offers"
+    }
 }
 ```
 
@@ -6217,11 +6226,11 @@ The frontend continues to send a normalized message:
 
 ```json
 {
-"channel": "web",
-"payload": {
-"text": "My bill was high",
-"session_id": "s1"
-}
+    "channel": "web",
+    "payload": {
+        "text": "My bill was high",
+        "session_id": "s1"
+    }
 }
 ```
 
@@ -6660,21 +6669,21 @@ from agent_framework.memory.summary_memory import create_conversation_summary_me
 
 memory = create_memory(settings)
 summary_memory = create_conversation_summary_memory(
-settings=settings,
-message_history=memory,
-llm=llm,
-telemetry=telemetry,
+    settings=settings,
+    message_history=memory,
+    llm=llm,
+    telemetry=telemetry,
 )
 
 workflow = AgentWorkflow(
-llm,
-memory,
-telemetry,
-analytics,
-settings,
-observer=observer,
-tool_router=tool_router,
-summary_memory=summary_memory,
+    llm,
+    memory,
+    telemetry,
+    analytics,
+    settings,
+    observer=observer,
+    tool_router=tool_router,
+    summary_memory=summary_memory,
 )
 ```
 
@@ -6688,33 +6697,33 @@ Example:
 
 ```python
 class AgentWorkflow:
-def __init__(
-self,
-llm,
-memory,
-telemetry,
-analytics,
-settings,
-observer=None,
-tool_router=None,
-summary_memory=None,
-):
-self.llm = llm
-self.memory = memory
-self.summary_memory = summary_memory
+    def __init__(
+    self,
+    llm,
+    memory,
+    telemetry,
+    analytics,
+    settings,
+    observer=None,
+    tool_router=None,
+    summary_memory=None,
+    ):
+        self.llm = llm
+        self.memory = memory
+        self.summary_memory = summary_memory
 ```
 
 When setting up `agent_kwargs`:
 
 ```python
 agent_kwargs = {
-"telemetry": telemetry,
-"tool_router": tool_router,
-"rag_service": rag_service,
-"cache": cache,
-"settings": settings,
-"observer": observer,
-"summary_memory": summary_memory,
+    "telemetry": telemetry,
+    "tool_router": tool_router,
+    "rag_service": rag_service,
+    "cache": cache,
+    "settings": settings,
+    "observer": observer,
+    "summary_memory": summary_memory,
 }
 ```
 
@@ -6727,13 +6736,13 @@ Agents that already use `build_messages()` only need to prepare the memory conte
 ```python
 await self.prepare_memory_context(state)
 
-messages = self.build_messages(
-state,
-system_prompt=system_prompt,
-mcp_results=mcp_results,
-rag_context=rag_context,
-rag_metadata=rag_metadata,
-)
+    messages = self.build_messages(
+        state,
+        system_prompt=system_prompt,
+        mcp_results=mcp_results,
+        rag_context=rag_context,
+        rag_metadata=rag_metadata,
+    )
 ```
 
 Agents that assemble `messages` manually should be adjusted to use `build_messages()` whenever possible.
@@ -6742,8 +6751,10 @@ Before:
 
 ```python
 messages = [
-{"role": "system", "content": system_prompt},
-{"role": "user", "content": f"Message: {user_text}\nMCP: {tool_context}"},]```
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": f"Message: {user_text}\nMCP: {tool_context}"},
+]
+```
 
 After:
 
@@ -6751,11 +6762,11 @@ After:
 await self.prepare_memory_context(state)
 
 messages = self.build_messages(
-state,
-system_prompt=system_prompt,
-mcp_results=tool_context,
-rag_context=rag_context,
-rag_metadata=rag_metadata,
+    state,
+    system_prompt=system_prompt,
+    mcp_results=tool_context,
+    rag_context=rag_context,
+    rag_metadata=rag_metadata,
 )
 ```
 
@@ -6821,12 +6832,12 @@ Payload example:
 
 ```json
 {
-"session_id": "default:billing:s1",
-"messages_total": 42,
-"messages_summarized": 30,
-"recent_messages_kept": 8,
-"summary_chars": 3840,
-"strategy": "summary"
+    "session_id": "default:billing:s1",
+    "messages_total": 42,
+    "messages_summarized": 30,
+    "recent_messages_kept": 8,
+    "summary_chars": 3840,
+    "strategy": "summary"
 }
 ```
 
@@ -7478,12 +7489,12 @@ Metadata written by chunk:
 
 ```json
 {
-"source": "manual_operacional.md",
-"file_name": "manual_operacional.md",
-"path": "/absolute/path/docs/manual_operacional.md",
-"chunk_index": 1,
-"chunk_total": 10,
-"content_sha256": "..."
+    "source": "manual_operacional.md",
+    "file_name": "manual_operacional.md",
+    "path": "/absolute/path/docs/manual_operacional.md",
+    "chunk_index": 1,
+    "chunk_total": 10,
+    "content_sha256": "..."
 }
 ```
 
