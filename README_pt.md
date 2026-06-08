@@ -16,6 +16,8 @@ IC/NOC/GRL = rastreabilidade de negócio, operação e governança
 
 O objetivo é que cada novo agente implemente apenas sua lógica de domínio — prompts, regras de negócio, ferramentas, schemas e nós específicos — sem recriar motores que já pertencem ao framework.
 
+>**Note: Se deseja ir direto e testar a DEMO, vá até a Seção 17 e 18.**
+
 ---
 
 ## 1. Visão geral da arquitetura

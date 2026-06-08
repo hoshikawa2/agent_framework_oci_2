@@ -16,6 +16,8 @@ IC/NOC/GRL = business, operation and governance traceability
 
 The goal is for each new agent to implement only its domain logic — prompts, business rules, tools, schemas, and specific nodes — without recreating engines that already belong to the framework.
 
+>**Note: If you want to test the DEMO, go to the Section 17 and 18.**
+
 ---
 
 ## 1. Architecture overview
