@@ -530,7 +530,18 @@ Por isso, no agente aparece este padrão:
 class FinanceiroAgent(AgentRuntimeMixin):
     name = "financeiro_agent"
 
-    def __init__(self, llm, telemetry=None, tool_router=None, rag_service=None, cache=None, settings=None, observer=None):
+    def __init__(
+            self,
+            llm,
+            telemetry=None,
+            tool_router=None,
+            rag_service=None,
+            cache=None,
+            settings=None,
+            observer=None,
+            memory=None,
+            summary_memory=None,
+    ):
         self.llm = llm
         self.telemetry = telemetry
         self.tool_router = tool_router
@@ -538,6 +549,8 @@ class FinanceiroAgent(AgentRuntimeMixin):
         self.cache = cache
         self.settings = settings
         self.observer = observer
+        self.memory = memory
+        self.summary_memory = summary_memory
 ```
 
 Isso significa:
@@ -550,6 +563,8 @@ rag_service  = busca documental/grafo/vetor
 cache        = cache Redis/memory/etc.
 settings     = configurações carregadas do .env/YAML
 observer     = emissor IC/NOC/GRL
+memory       = memória de conversação
+summary_memory=memória sumarizada
 ```
 
 O agente recebe esses objetos prontos. Ele não deve criar uma nova instância por conta própria dentro do `run()`.
@@ -746,36 +761,71 @@ Se o agente faz isso, ele está usando o framework corretamente.
 
 ```python
 async def run(self, state):
-    await self._emit_ic("IC.FINANCEIRO_STARTED", state, component="agent.financeiro.start")
+    await self._emit_ic(
+        "IC.FINANCEIRO_AGENT_STARTED",
+        state,
+        {"business_component": "financeiro"},
+        component="agent.financeiro.start",
+    )
 
-    ctx = state.get("context") or {}
-    business_context = ctx.get("business_context") or state.get("business_context") or {}
+    tool_context = await self._collect_tool_context(state)
+    if tool_context:
+        await self._emit_ic(
+            "IC.FINANCEIRO_MCP_CONTEXT_COLLECTED",
+            state,
+            {"tool_result_count": len(tool_context)},
+            component="agent.financeiro.mcp",
+        )
 
-    if not business_context.get("customer_key"):
-        return {
-            "answer": "Informe o identificador do cliente para continuar.",
-            "next_state": "WAITING_CUSTOMER_KEY",
-            "mcp_results": [],
-        }
-
-    mcp_results = await self._collect_mcp_context(state)
     rag_context, rag_metadata = await self._retrieve_rag_context(state)
+    if rag_metadata.get("enabled"):
+        await self._emit_ic(
+            "IC.FINANCEIRO_RAG_CONTEXT_RETRIEVED",
+            state,
+            {
+                "document_count": rag_metadata.get("document_count"),
+                "graph_neighbors": rag_metadata.get("graph_neighbors"),
+                "latency_ms": rag_metadata.get("latency_ms"),
+            },
+            component="agent.financeiro.rag",
+        )
 
-    messages = [
-        {"role": "system", "content": "Você é um agente financeiro corporativo."},
-        {"role": "user", "content": f"Evidências MCP: {mcp_results}\nContexto RAG: {rag_context}"},
-    ]
+    # Prepara ConversationSummaryMemory antes de montar o prompt.
+    # O build_messages() do framework injeta resumo + últimas mensagens quando habilitado.
+    await self.prepare_memory_context(state)
+
+    messages = self.build_messages(
+        state,
+        system_prompt=apply_agent_profile_prompt(
+            state,
+            "Você é um agente financeiro. Responda com clareza, usando dados das ferramentas quando disponíveis. Não confirme ações financeiras sem evidência e confirmação explícita."
+        ),
+        mcp_results=tool_context,
+        rag_context=rag_context,
+        rag_metadata=rag_metadata,
+    )
 
     answer = await self._invoke_llm_cached(state, "FinanceiroAgent", messages)
-
-    await self._emit_ic("IC.FINANCEIRO_COMPLETED", state, {"mcp_count": len(mcp_results)}, component="agent.financeiro.completed")
-
-    return {
-        "answer": answer,
+    result = {
+        "answer": f"[FinanceiroAgent] {answer}",
         "next_state": "FINANCEIRO_ACTIVE",
-        "mcp_results": mcp_results,
-        "rag_metadata": rag_metadata,
+        "mcp_results": tool_context,
+        "rag": rag_metadata,
+        "memory_context_metadata": state.get("memory_context_metadata"),
     }
+
+    await self._emit_ic(
+        "IC.FINANCEIRO_AGENT_COMPLETED",
+        state,
+        {
+            "answer_chars": len(result.get("answer") or ""),
+            "has_mcp_results": bool(tool_context),
+            "rag_enabled": bool(rag_metadata.get("enabled")),
+            "memory_context": state.get("memory_context_metadata"),
+        },
+        component="agent.financeiro.completed",
+    )
+    return result
 ```
 
 Esse exemplo mostra a intenção do mixin: o desenvolvedor escreve o raciocínio do agente, mas delega infraestrutura para métodos padronizados.
@@ -1472,12 +1522,20 @@ from app.agents.runtime import AgentRuntimeMixin
 
 
 class FinanceiroAgent(AgentRuntimeMixin):
-    # Este nome precisa bater com o nome usado no workflow e nas configurações.
     name = "financeiro_agent"
 
-    def __init__(self, llm, telemetry=None, tool_router=None, rag_service=None, cache=None, settings=None, observer=None):
-        # Estes objetos são injetados pelo workflow/framework.
-        # O agente usa, mas não cria esses motores.
+    def __init__(
+            self,
+            llm,
+            telemetry=None,
+            tool_router=None,
+            rag_service=None,
+            cache=None,
+            settings=None,
+            observer=None,
+            memory=None,
+            summary_memory=None,
+    ):
         self.llm = llm
         self.telemetry = telemetry
         self.tool_router = tool_router
@@ -1485,9 +1543,10 @@ class FinanceiroAgent(AgentRuntimeMixin):
         self.cache = cache
         self.settings = settings
         self.observer = observer
+        self.memory = memory
+        self.summary_memory = summary_memory
 
     async def run(self, state):
-        # 1. Marca o início da jornada de negócio deste agente.
         await self._emit_ic(
             "IC.FINANCEIRO_AGENT_STARTED",
             state,
@@ -1495,30 +1554,7 @@ class FinanceiroAgent(AgentRuntimeMixin):
             component="agent.financeiro.start",
         )
 
-        # 2. Separa os blocos do contrato do framework.
-        # O agente lê esses blocos, mas quem cria/normaliza é o framework.
-        ctx = state.get("context") or {}
-        session = ctx.get("session") or {}
-        session_metadata = session.get("metadata") or {}
-        business_context = ctx.get("business_context") or state.get("business_context") or {}
-        tool_arguments = ctx.get("tool_arguments") or state.get("tool_arguments") or {}
-
-        # 3. Interpreta a mensagem atual usando o texto já sanitizado pelos guardrails,
-        # mas preserva o texto original apenas quando precisar extrair identificadores.
-        user_text = state.get("sanitized_input") or state.get("user_text") or ""
-        original_text = (
-                ctx.get("message")
-                or ctx.get("text")
-                or ctx.get("query")
-                or session.get("last_user_message")
-                or state.get("user_text")
-                or user_text
-        )
-
-        # 4. Chama tools MCP selecionadas pelo roteamento, quando configuradas.
-        # O agente não precisa saber se a tool usa REST, SOAP, DB ou mock.
         tool_context = await self._collect_tool_context(state)
-
         if tool_context:
             await self._emit_ic(
                 "IC.FINANCEIRO_MCP_CONTEXT_COLLECTED",
@@ -1527,44 +1563,43 @@ class FinanceiroAgent(AgentRuntimeMixin):
                 component="agent.financeiro.mcp",
             )
 
-        # 5. Recupera contexto documental, se o RAG estiver habilitado.
         rag_context, rag_metadata = await self._retrieve_rag_context(state)
+        if rag_metadata.get("enabled"):
+            await self._emit_ic(
+                "IC.FINANCEIRO_RAG_CONTEXT_RETRIEVED",
+                state,
+                {
+                    "document_count": rag_metadata.get("document_count"),
+                    "graph_neighbors": rag_metadata.get("graph_neighbors"),
+                    "latency_ms": rag_metadata.get("latency_ms"),
+                },
+                component="agent.financeiro.rag",
+            )
 
-        # 6. Monta a mensagem para o LLM.
-        # O system prompt define comportamento e limites do agente.
-        # O user prompt leva dados, evidências e contexto.
-        messages = [
-            {
-                "role": "system",
-                "content": apply_agent_profile_prompt(
-                    state,
-                    "Você é um agente financeiro. Responda com clareza, usando dados das ferramentas quando disponíveis. Não confirme ações financeiras sem evidência e confirmação explícita."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Mensagem: {state.get('sanitized_input') or state['user_text']}\n"
-                    f"Sessão: {session}\n"
-                    f"Intent: {state.get('intent')}\n"
-                    f"Dados MCP: {tool_context}\n"
-                    f"Contexto RAG: {rag_context}"
-                ),
-            },
-        ]
+        # Prepara ConversationSummaryMemory antes de montar o prompt.
+        # O build_messages() do framework injeta resumo + últimas mensagens quando habilitado.
+        await self.prepare_memory_context(state)
 
-        # 7. Chama o LLM usando o runtime comum, com cache e telemetria.
+        messages = self.build_messages(
+            state,
+            system_prompt=apply_agent_profile_prompt(
+                state,
+                "Você é um agente financeiro. Responda com clareza, usando dados das ferramentas quando disponíveis. Não confirme ações financeiras sem evidência e confirmação explícita."
+            ),
+            mcp_results=tool_context,
+            rag_context=rag_context,
+            rag_metadata=rag_metadata,
+        )
+
         answer = await self._invoke_llm_cached(state, "FinanceiroAgent", messages)
-
-        # 8. Retorna no contrato esperado pelo workflow.
         result = {
             "answer": f"[FinanceiroAgent] {answer}",
             "next_state": "FINANCEIRO_ACTIVE",
             "mcp_results": tool_context,
             "rag": rag_metadata,
+            "memory_context_metadata": state.get("memory_context_metadata"),
         }
 
-        # 9. Marca o fim da jornada de negócio.
         await self._emit_ic(
             "IC.FINANCEIRO_AGENT_COMPLETED",
             state,
@@ -1572,15 +1607,13 @@ class FinanceiroAgent(AgentRuntimeMixin):
                 "answer_chars": len(result.get("answer") or ""),
                 "has_mcp_results": bool(tool_context),
                 "rag_enabled": bool(rag_metadata.get("enabled")),
+                "memory_context": state.get("memory_context_metadata"),
             },
             component="agent.financeiro.completed",
         )
-
         return result
 
     async def _collect_tool_context(self, state):
-        # Este método delega para o MCP Tool Router do framework.
-        # As tools chamadas dependem da intent definida em routing.yaml.
         return await self._collect_mcp_context(state)
 ```
 
@@ -1789,6 +1822,12 @@ Por isso, o workflow precisa de um método intermediário. Esse método é o wra
 A implementação é um método dentro da classe `AgentWorkflow` (/app/workflows/agent_graph.py).
 
 #### 6.5.2. Código do wrapper
+
+Importe a FinanceiroAgent em /app/workflows/agent_graph.py:
+
+```python
+from app.agents.financeiro_agent import FinanceirotAgent
+```
 
 Adicione o método abaixo dentro da classe `AgentWorkflow`:
 
@@ -2612,7 +2651,7 @@ Adicione:
 tools:
   consultar_titulo_financeiro:
     description: Consulta um título financeiro por cliente e contrato.
-    mcp_server: financeiro
+    mcp_server: telecom
     enabled: true
     args_schema:
       customer_id: string
@@ -2620,7 +2659,7 @@ tools:
 
   consultar_pagamentos_financeiro:
     description: Consulta pagamentos financeiros por cliente.
-    mcp_server: financeiro
+    mcp_server: telecom
     enabled: true
     args_schema:
       customer_id: string
@@ -4773,6 +4812,72 @@ há dados seguros para teste
 ```
 
 Para desenvolvimento, você pode usar `use_mock: true` no `mcp_parameter_mapping.yaml` ou implementar um MCP Server local com respostas simuladas.
+
+Vamos criar os 2 serviços (consultar_titulo_financeiro e consultar_pagamentos_financeiro) para funcionar no MCP Server (mock) de exemplo deste projeto. Altere em /mcp_servers/telecom_mcp_server/main.py.
+
+Inclua esta declaração em TOOLS:
+
+```json
+    "consultar_titulo_financeiro": {
+        "description": "Consulta um título financeiro por cliente e contrato.",
+        "input_schema": {"customer_id": "string", "contract_id": "string", "session_id": "string"},
+    },
+    "consultar_pagamentos_financeiro": {
+        "description": "Consulta pagamentos financeiros por cliente.",
+        "input_schema": {"customer_id": "string", "session_id": "string"},
+    }
+```
+
+Desta forma:
+
+```json
+TOOLS = {
+    "consultar_fatura": {
+        "description": "Consulta dados resumidos de fatura por msisdn/invoice_id.",
+        "input_schema": {"msisdn": "string", "invoice_id": "string"},
+    },
+    "consultar_pagamentos": {
+        "description": "Consulta histórico de pagamentos do cliente.",
+        "input_schema": {"msisdn": "string"},
+    },
+    "consultar_plano": {
+        "description": "Consulta plano ativo e atributos comerciais.",
+        "input_schema": {"msisdn": "string", "asset_id": "string"},
+    },
+    "listar_servicos": {
+        "description": "Lista serviços ativos e adicionais VAS.",
+        "input_schema": {"msisdn": "string"},
+    },
+    "consultar_titulo_financeiro": {
+        "description": "Consulta um título financeiro por cliente e contrato.",
+        "input_schema": {"customer_id": "string", "contract_id": "string", "session_id": "string"},
+    },
+    "consultar_pagamentos_financeiro": {
+        "description": "Consulta pagamentos financeiros por cliente.",
+        "input_schema": {"customer_id": "string", "session_id": "string"},
+    }
+}
+```
+
+E em call_tool() adicione os serviços mock:
+
+```python
+    elif name == "consultar_titulo_financeiro":
+        result = {
+            "customer_id": args.get("customer_id") or "123456",
+            "contract_id": args.get("contract_id") or "3000131180",
+            "status": "ABERTO",
+            "valor": 129.90,
+            "vencimento": "2026-06-20",
+        }
+    elif name == "consultar_pagamentos_financeiro":
+        result = {
+            "customer_id": args.get("customer_id") or "123456",
+            "pagamentos": [
+                {"data": "2026-06-01", "valor": 129.90, "status": "COMPENSADO"}
+            ],
+        }
+```
 
 ---
 
