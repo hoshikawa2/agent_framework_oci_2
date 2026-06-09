@@ -1,69 +1,69 @@
-# Tutorial — Implementing an Agent using `agent_template_backend`
+# Tutorial — Implementação de um Agente usando `agent_template_backend`
 
-This tutorial teaches you how to implement a new agent from `agent_template_backend`, using the framework as a corporate execution engine.
+Este tutorial ensina como implementar um novo agente a partir do `agent_template_backend`, usando o framework como motor corporativo de execução.
 
-The central idea is simple:
+A ideia central é simples:
 
 ```text
-Framework = reusable engine
-Agent = specific business rule
-MCP Server = standardized boundary with external systems
-Config YAML = changeable behavior without recompiling code
-IC/NOC/GRL = business, operation and governance traceability
+Framework = motor reutilizável
+Agente = regra de negócio específica
+MCP Server = fronteira padronizada com sistemas externos
+Config YAML = comportamento alterável sem recompilar código
+IC/NOC/GRL = rastreabilidade de negócio, operação e governança
 ```
 
-![img_1_en.png](img_1_en.png)
+![img_1.png](img_1.png)
 
-The goal is for each new agent to implement only its domain logic — prompts, business rules, tools, schemas, and specific nodes — without recreating engines that already belong to the framework.
+O objetivo é que cada novo agente implemente apenas sua lógica de domínio — prompts, regras de negócio, ferramentas, schemas e nós específicos — sem recriar motores que já pertencem ao framework.
 
->**Note: If you want to test the DEMO, go to the Section 17 and 18.**
+>**Note: Se deseja ir direto e testar a DEMO, vá até a Seção 17 e 18.**
 
 ---
 
-## 1. Architecture overview
+## 1. Visão geral da arquitetura
 
-The template separates what is generic from what is specific.
+O template separa o que é genérico do que é específico.
 
 ```text
 agent_template_backend/
 ├── app/
-│   ├── main.py                    # FastAPI API, gateway, session, SSE, and workflow input
-│   ├── state.py                   # LangGraph shared state contract
+│   ├── main.py                    # API FastAPI, gateway, sessão, SSE e entrada do workflow
+│   ├── state.py                   # Contrato de estado compartilhado do LangGraph
 │   ├── workflows/
-│   │   └── agent_graph.py          # Enterprise workflow with router, guardrails, agents, judges, and persistence
+│   │   └── agent_graph.py          # Workflow corporativo com router, guardrails, agentes, judges e persistência
 │   ├── agents/
-│   │   ├── runtime.py              # Common resources for agents: MCP, RAG, cache, IC, LLM
-│   │   ├── billing_agent.py        # Example of an invoice agent
-│   │   ├── product_agent.py        # Example of a product agent
-│   │   ├── orders_agent.py         # Example of an order agent
-│   │   └── support_agent.py        # Example of a support agent
-│   └── examples/                  # Examples of IC, NOC, GRL, MCP, and observer
+│   │   ├── runtime.py              # Recursos comuns para agentes: MCP, RAG, cache, IC, LLM
+│   │   ├── billing_agent.py        # Exemplo de agente de faturas
+│   │   ├── product_agent.py        # Exemplo de agente de produtos
+│   │   ├── orders_agent.py         # Exemplo de agente de pedidos
+│   │   └── support_agent.py        # Exemplo de agente de suporte
+│   └── examples/                  # Exemplos de IC, NOC, GRL, MCP e observer
 ├── config/
-│   ├── agents.yaml                # Record of available agents
-│   ├── routing.yaml               # Intents, keywords, fallback and route decision
-│   ├── tools.yaml                 # Catalog of tools available for the backend
-│   ├── mcp_servers.yaml           # Local MCP endpoints
-│   ├── mcp_servers.docker.yaml    # MCP endpoints in Docker Compose
-│   ├── mcp_parameter_mapping.yaml # Mapping between canonical keys and tool parameters
-│   ├── identity.yaml              # Business identity resolution
-│   ├── guardrails.yaml            # Global guardrails
-│   ├── judges.yaml                # Global judges
-│   ├── prompt_policy.yaml         # Global prompt policy
-│   └── agents/<agent_id>/         # Isolated settings by agent
+│   ├── agents.yaml                # Registro dos agentes disponíveis
+│   ├── routing.yaml               # Intents, keywords, fallback e decisão de rota
+│   ├── tools.yaml                 # Catálogo das ferramentas disponíveis para o backend
+│   ├── mcp_servers.yaml           # Endpoints MCP locais
+│   ├── mcp_servers.docker.yaml    # Endpoints MCP em Docker Compose
+│   ├── mcp_parameter_mapping.yaml # Mapeamento entre chaves canônicas e parâmetros das tools
+│   ├── identity.yaml              # Resolução de identidade de negócio
+│   ├── guardrails.yaml            # Guardrails globais
+│   ├── judges.yaml                # Judges globais
+│   ├── prompt_policy.yaml         # Política global de prompt
+│   └── agents/<agent_id>/         # Configurações isoladas por agente
 ├── data/
-│   └── agent_framework.db         # Local sample database, when applicable
+│   └── agent_framework.db         # Banco local de exemplo, quando aplicável
 ├── Dockerfile
 ├── requirements.txt
-└── .env                           # Local configuration
+└── .env                           # Configuração local
 ```
 
-### 1.1. What belongs to the framework
+### 1.1. O que pertence ao framework
 
-The framework should concentrate the reusable engines:
+O framework deve concentrar os motores reutilizáveis:
 
-- LangGraph and workflow assembly.
+- LangGraph e montagem do workflow.
 - Checkpoint.
-- Memory.
+- Memória.
 - Session repository.
 - Channel gateway.
 - Enterprise Router.
@@ -71,72 +71,72 @@ The framework should concentrate the reusable engines:
 - Guardrails.
 - Output Supervisor.
 - Judges.
-- Langfuse/OpenTelemetry Telemetry.
+- Telemetria Langfuse/OpenTelemetry.
 - Analytics IC/NOC/GRL.
 - MCP Tool Router.
 - Cache.
-- Generic RAG.
+- RAG genérico.
 
-### 1.2. What belongs to the agent
+### 1.2. O que pertence ao agente
 
-The agent should focus only on domain customizations:
+O agente deve concentrar apenas customizações de domínio:
 
-- Specific prompts.
-- Business rules.
-- Own schemas.
-- Specific tools.
-- Clients from external systems, preferably encapsulated behind MCP.
-- Parameter mapping.
-- Specialized nodes, if any.
-- Journey business ICs.
+- Prompts específicos.
+- Regras de negócio.
+- Schemas próprios.
+- Tools específicas.
+- Clients de sistemas externos, preferencialmente encapsulados atrás de MCP.
+- Mapeamento de parâmetros.
+- Nós especializados, se houver.
+- ICs de negócio da jornada.
 
-When a rule only makes sense for one domain, it belongs to the agent. When a capability is to be used by multiple agents, it belongs to the framework.
+Quando uma regra só faz sentido para um domínio, ela pertence ao agente. Quando uma capacidade deve ser usada por vários agentes, ela pertence ao framework.
 
 ---
 
-## 2. Template execution flow
+## 2. Fluxo de execução do template
 
-The main flow starts at `app/main.py`, at the endpoint`/gateway/message`.
+O fluxo principal começa em `app/main.py`, no endpoint `/gateway/message`.
 
 ```text
-Channel / Frontend / API
-↓
+Canal / Frontend / API
+  ↓
 POST /gateway/message
-↓
+  ↓
 ChannelGateway.normalize()
-↓
+  ↓
 IdentityResolver
-↓
+  ↓
 SessionRepository
-↓
+  ↓
 MemoryRepository
-↓
+  ↓
 AgentWorkflow.ainvoke()
-↓
+  ↓
 LangGraph
-↓
+  ↓
 Input Guardrails
-↓
-Enterprise Router or Supervisor
-↓
-Specialized agent
-↓
+  ↓
+Enterprise Router ou Supervisor
+  ↓
+Agente especializado
+  ↓
 MCP Tool Router / RAG / Cache / LLM
-↓
+  ↓
 Output Supervisor
-↓
+  ↓
 Output Guardrails
-↓
+  ↓
 Judges
-↓
+  ↓
 Supervisor Review
-↓
-Persistence / Checkpoint / Memory
-↓
-Response
+  ↓
+Persistência / Checkpoint / Memória
+  ↓
+Resposta
 ```
 
-`AgentWorkflow`, in `app/workflows/agent_graph.py`, usually already contains corporate nodes such as:
+O `AgentWorkflow`, em `app/workflows/agent_graph.py`, normalmente já contém nós corporativos como:
 
 ```text
 input_guardrails
@@ -154,12 +154,12 @@ supervisor_review
 persist
 ```
 
-To create a new agent, you usually change:
+Para criar um novo agente, normalmente você altera:
 
 ```text
-app/agents/<new_agent>.py
+app/agents/<novo_agente>.py
 app/workflows/agent_graph.py
-app/state.py, if you need new fields
+app/state.py, se precisar de campos novos
 config/agents.yaml
 config/routing.yaml
 config/tools.yaml
@@ -174,17 +174,17 @@ config/agents/<agent_id>/judges.yaml
 
 ---
 
-## 3. Prerequisites
+## 3. Pré-requisitos
 
-### 3.1. Local requirements
+### 3.1. Requisitos locais
 
-- Python 3.12 or 3.13.
-- `pip` or `uv`.
-- `Agent_framework` project available in the same workspace, if the template uses local installation.
-- MCP servers, if the agent uses tools.
-- Redis, Oracle Autonomous Database, MongoDB and Langfuse are optional depending on the configuration.
+- Python 3.12 ou 3.13.
+- `pip` ou `uv`.
+- Projeto `agent_framework` disponível no mesmo workspace, caso o template use instalação local.
+- Servidores MCP, se o agente usar tools.
+- Redis, Oracle Autonomous Database, MongoDB e Langfuse são opcionais conforme configuração.
 
-Recommended structure:
+Estrutura recomendada:
 
 ```text
 workspace/
@@ -192,9 +192,9 @@ workspace/
 └── agent_template_backend/
 ```
 
-### 3.2. Local installation
+### 3.2. Instalação local
 
-Inside the `agent_template_backend` directory:
+Dentro do diretório `agent_template_backend`:
 
 ```bash
 python -m venv .venv
@@ -202,13 +202,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-If `agent_framework` is in local development:
+Se o `agent_framework` estiver em desenvolvimento local:
 
 ```bash
 pip install -e ../agent_framework
 ```
 
-In Windows PowerShell:
+Em Windows PowerShell:
 
 ```powershell
 python -m venv .venv
@@ -219,11 +219,11 @@ pip install -e ..\agent_framework
 
 ---
 
-## 4. `.env` configuration
+## 4. Configuração do `.env`
 
-The `.env` defines which engines will be activated. It's not just a properties file: it changes the agent's behavior at runtime.
+O `.env` define quais motores serão ativados. Ele não é apenas um arquivo de propriedades: ele muda o comportamento do agente em tempo de execução.
 
-Secure example for local development:
+Exemplo seguro para desenvolvimento local:
 
 ```env
 APP_NAME=ai-agent-template
@@ -289,23 +289,23 @@ MCP_TOOL_TIMEOUT_SECONDS=30
 IDENTITY_CONFIG_PATH=./config/identity.yaml
 ```
 
-### 4.1. How to think about `.env`
+### 4.1. Como raciocinar sobre o `.env`
 
-Before testing a new agent, answer:
+Antes de testar um novo agente, responda:
 
 ```text
-Will the LLM be mock or real?
-Will the memory be local or in a database?
-Does the checkpoint need to survive a restart?
-Will the MCP tools be called for real or simulated?
-Will routing be by rule/intent or supervisor?
-Should guardrails, judges, and supervisor block, review, or just observe?
-Will Langfuse/OTEL/Streaming be used in this environment?
+O LLM será mock ou real?
+A memória será local ou banco?
+O checkpoint precisa sobreviver a restart?
+As tools MCP serão chamadas de verdade ou simuladas?
+O roteamento será por regra/intent ou supervisor?
+Guardrails, judges e supervisor devem bloquear, revisar ou só observar?
+Langfuse/OTEL/Streaming serão usados neste ambiente?
 ```
 
-For a first test, use `LLM_PROVIDER=mock`, `in-memory` persistence, and mock/local MCP. Then move on to real LLM, database, Langfuse, and real services.
+Para um primeiro teste, use `LLM_PROVIDER=mock`, persistência em `memory` e MCP mock/local. Depois evolua para LLM real, banco, Langfuse e serviços reais.
 
-To use Oracle Autonomous Database, set:
+Para usar Oracle Autonomous Database, ajuste:
 
 ```env
 SESSION_REPOSITORY_PROVIDER=autonomous
@@ -321,7 +321,7 @@ ADB_WALLET_PASSWORD=<senha-wallet>
 ADB_TABLE_PREFIX=AGENTFW
 ```
 
-To use Langfuse:
+Para usar Langfuse:
 
 ```env
 ENABLE_LANGFUSE=true
@@ -329,16 +329,15 @@ LANGFUSE_PUBLIC_KEY=<public-key>
 LANGFUSE_SECRET_KEY=<secret-key>
 LANGFUSE_HOST=http://localhost:3005
 ```
-
 ---
 
 ### 4.2.`llm_profiles.yaml`
 
-### 4.2.1. Purpose of `llm_profiles.yaml`
+### 4.2.1. Objetivo do `llm_profiles.yaml`
 
-The `llm_profiles.yaml` file is used to centrally and granularly configure which LLM model each part of the framework should use.
+O arquivo `llm_profiles.yaml` serve para configurar, de forma centralizada e granular, qual modelo LLM cada parte do framework deve usar.
 
-Without this file, the framework usually relies on a single model defined in `.env`, for example:
+Sem esse arquivo, normalmente o framework usa um único modelo definido no `.env`, por exemplo:
 
 ```env
 LLM_PROVIDER=oci_openai
@@ -347,11 +346,11 @@ LLM_TEMPERATURE=0.2
 LLM_MAX_TOKENS=2048
 ```
 
-This means that the supervisor, router, agents, RAG, memory, guardrails, and judges tend to use the same default model, unless something specific is hardcoded elsewhere.
+Isso significa que supervisor, router, agentes, RAG, memória, guardrails e judges acabam usando o mesmo modelo padrão, salvo alguma configuração específica no código.
 
-With `llm_profiles.yaml`, each inference point can use a different model with its own parameters.
+Com o `llm_profiles.yaml`, cada ponto de inferência pode usar um modelo diferente, com parâmetros próprios.
 
-Example:
+Exemplo:
 
 ```yaml
 profiles:
@@ -382,46 +381,46 @@ profiles:
 
 ---
 
-### 4.2.2. Why this file matters
+### 4.2.2. Por que esse arquivo é importante
 
-In an enterprise agent framework, not every component should necessarily use the same model.
+Em um framework de agentes corporativos, nem todo componente precisa usar o mesmo modelo.
 
-For example:
+Por exemplo:
 
-- The main agent may use a more flexible model.
-- The supervisor may use temperature `0` for predictable routing.
-- Guardrails should be strict and stable.
-- Judges should evaluate answers with low variability.
-- RAG may use different models for rewriting, compression, and final generation.
-- Memory summarization may use a cheaper or shorter-context model.
+- O agente principal pode usar um modelo mais criativo.
+- O supervisor pode usar temperatura `0` para roteamento mais previsível.
+- Guardrails devem ser mais rígidos e determinísticos.
+- Judges devem avaliar respostas com baixa variabilidade.
+- RAG pode usar modelos diferentes para reescrita, compressão e geração.
+- Memória pode usar um modelo barato ou mais curto para resumo.
 
-`llm_profiles.yaml` separates these responsibilities.
+O `llm_profiles.yaml` permite separar essas responsabilidades.
 
 ---
 
-### 4.2.3. General behavior
+### 4.2.3. Regra geral de funcionamento
 
-The expected framework rule is:
+A regra esperada do framework é:
 
 ```text
-If llm_profiles.yaml exists:
-  the framework uses the profiles defined in it for each component.
+Se llm_profiles.yaml existir:
+  o framework usa os profiles definidos nele para cada componente.
 
-If llm_profiles.yaml does not exist:
-  the framework keeps the previous behavior and uses .env as the global configuration.
+Se llm_profiles.yaml não existir:
+  o framework mantém o comportamento antigo e usa o .env como configuração global.
 ```
 
-So `llm_profiles.yaml` is optional.
+Ou seja, o `llm_profiles.yaml` é opcional.
 
-It does not completely replace `.env`. It acts as a per-component override layer.
+Ele não substitui completamente o `.env`. Ele funciona como uma camada de override por componente.
 
 ---
 
-### 4.2.4. When the file does NOT exist
+### 4.2.4. Quando o arquivo NÃO existe
 
-If `llm_profiles.yaml` does not exist, the framework should only use the global `.env` configuration.
+Se o arquivo `llm_profiles.yaml` não existir, o framework deve usar somente as configurações globais do `.env`.
 
-Example:
+Exemplo:
 
 ```env
 LLM_PROVIDER=oci_openai
@@ -430,27 +429,27 @@ LLM_TEMPERATURE=0.2
 LLM_MAX_TOKENS=2048
 ```
 
-In this scenario, all LLM-based components tend to use the same global provider/model:
+Nesse cenário, todos os componentes que usam LLM tendem a usar o mesmo provider/modelo global:
 
 ```text
 supervisor      -> .env
 router          -> .env
-LLM guardrails  -> .env
-LLM judges      -> .env
-RAG             -> .env
-summary memory  -> .env
+guardrails LLM  -> .env
+judges LLM      -> .env
+rag             -> .env
+memory summary  -> .env
 agents          -> .env
 ```
 
-This mode is useful for simple environments, proof-of-concepts, or when per-component model control is not needed yet.
+Esse modo é útil para ambientes simples, provas de conceito ou quando ainda não se quer controlar modelos por componente.
 
 ---
 
-### 4.2.5. When the file exists
+### 4.2.5. Quando o arquivo existe
 
-If `llm_profiles.yaml` exists, the framework starts looking for a specific profile for each inference point.
+Se o arquivo `llm_profiles.yaml` existir, o framework passa a procurar um profile específico para cada ponto de inferência.
 
-Example:
+Exemplo:
 
 ```yaml
 profiles:
@@ -467,17 +466,17 @@ profiles:
     max_tokens: 800
 ```
 
-When the supervisor calls an LLM, it should use the `supervisor` profile.
+Quando o supervisor chamar LLM, ele deve usar o profile `supervisor`.
 
-When an LLM judge calls an LLM, it should use the `judge` profile.
+Quando um judge LLM chamar LLM, ele deve usar o profile `judge`.
 
 ---
 
-### 4.2.6. Relationship between `default` and specific profiles
+### 4.2.6. Relação entre `default` e profiles específicos
 
-The `default` profile works as a base profile.
+O profile `default` funciona como base.
 
-Example:
+Exemplo:
 
 ```yaml
 profiles:
@@ -492,9 +491,9 @@ profiles:
     max_tokens: 700
 ```
 
-If the resolver supports inheritance, the `supervisor` profile may inherit `provider` and `model` from `default`, while overriding only `temperature` and `max_tokens`.
+Nesse caso, se o resolver suportar herança, o profile `supervisor` pode herdar `provider` e `model` do `default`, alterando apenas `temperature` e `max_tokens`.
 
-However, to avoid ambiguity, the safest configuration is to explicitly declare `provider` and `model` in every profile:
+Porém, para evitar ambiguidade, a configuração mais segura é declarar `provider` e `model` explicitamente em todos os profiles:
 
 ```yaml
 supervisor:
@@ -504,38 +503,40 @@ supervisor:
   max_tokens: 700
 ```
 
-This is the recommended format.
+Esse é o formato recomendado.
 
 ---
 
-### 4.2.7. Main framework profiles
+### 4.2.7. Profiles principais do framework
 
-| Profile | Purpose |
+Abaixo estão os profiles mais comuns:
+
+| Profile | Uso |
 |---|---|
-| `default` | Base/fallback configuration |
-| `supervisor` | Next-agent or flow decision |
-| `router` | Intent or policy routing |
-| `guardrail` | Input or general safety guardrails |
-| `grl` | Output guardrails and response rules |
-| `judge` | LLM judges such as quality and groundedness |
-| `rag_rewriter` | Query rewriting for RAG |
-| `rag_compressor` | Retrieved context compression |
-| `rag_generation` | Final RAG-grounded answer generation |
-| `summary_memory` | Conversational memory summarization |
-| `noc` | Operational/NOC analysis |
-| `billing_agent` | Billing/invoice agent-specific model |
-| `product_agent` | Product agent-specific model |
-| `backoffice_agent` | Backoffice agent-specific model |
+| `default` | Configuração base/fallback |
+| `supervisor` | Decisão de próximo agente ou fluxo |
+| `router` | Roteamento por intenção ou política |
+| `guardrail` | Guardrails de entrada ou segurança geral |
+| `grl` | Guardrails de saída e regras de resposta |
+| `judge` | Judges LLM, como qualidade e groundedness |
+| `rag_rewriter` | Reescrita de pergunta para RAG |
+| `rag_compressor` | Compressão de contexto recuperado |
+| `rag_generation` | Geração final usando contexto RAG |
+| `summary_memory` | Resumo de memória conversacional |
+| `noc` | Análise operacional/NOC |
+| `billing_agent` | Modelo específico do agente de contas/faturas |
+| `product_agent` | Modelo específico do agente de produtos |
+| `backoffice_agent` | Modelo específico do agente de backoffice |
 
 ---
 
-### 4.2.8. Guardrails and `llm_profiles.yaml`
+### 4.2.8. Guardrails e `llm_profiles.yaml`
 
-Guardrails can be deterministic or LLM-based.
+Os guardrails podem ser determinísticos ou baseados em LLM.
 
-Deterministic guardrails do not need to call a model. Therefore, even if the `guardrail` profile contains an invalid model, a purely deterministic rail may block the request before any LLM call happens.
+Guardrails determinísticos não precisam chamar modelo. Por isso, mesmo que o profile `guardrail` esteja com modelo errado, um rail puramente determinístico pode bloquear antes de chegar no LLM.
 
-Example:
+Exemplo:
 
 ```yaml
 guardrail:
@@ -543,11 +544,11 @@ guardrail:
   model: xopenai.gpt-4.1
 ```
 
-If the input triggers a deterministic prompt-injection pattern, the model error may not appear because the LLM was not called.
+Se o texto disparar um padrão determinístico de prompt injection, o erro de modelo pode não aparecer, porque o LLM não foi chamado.
 
-To validate that the profile is being used, test a guardrail path that actually calls the LLM.
+Para validar se o profile está sendo usado, é preciso testar um guardrail que realmente chame LLM.
 
-Typical profile mapping:
+Exemplos de profiles usados:
 
 ```text
 guardrail -> PINJ, TOX, OOS, DLEX_IN, RAGSEC
@@ -556,11 +557,11 @@ grl       -> REVPREC, AOFERTA, DLEX_OUT
 
 ---
 
-### 4.2.9. Judges and `llm_profiles.yaml`
+### 4.2.9. Judges e `llm_profiles.yaml`
 
-`judges.yaml` defines which judges exist and whether they are enabled.
+O `judges.yaml` define quais judges existem e se estão habilitados.
 
-Example:
+Exemplo:
 
 ```yaml
 judges:
@@ -573,9 +574,9 @@ judges:
     threshold: 0.6
 ```
 
-If these judges are calibrated as LLM judges, they use the `judge` profile from `llm_profiles.yaml`.
+Se esses judges forem calibrados como LLM, eles usarão o profile `judge` do `llm_profiles.yaml`.
 
-Example:
+Exemplo:
 
 ```yaml
 judge:
@@ -585,28 +586,28 @@ judge:
   max_tokens: 800
 ```
 
-The important separation is:
+O ponto importante é:
 
 ```text
-judges.yaml       -> defines which judges run and their rules
-llm_profiles.yaml -> defines which model the LLM judge uses
+judges.yaml       -> define quais judges executam e suas regras
+llm_profiles.yaml -> define qual modelo o judge LLM usa
 ```
 
-If the `judge` profile points to an invalid model and the LLM judge is executed, the framework should fail according to the policy configured in `judges.yaml`, for example `fail_closed`.
+Se o modelo do profile `judge` estiver errado e o judge LLM for executado, o framework deve falhar conforme a política configurada no próprio `judges.yaml`, por exemplo `fail_closed`.
 
 ---
 
-### 4.2.10. RAG and `llm_profiles.yaml`
+### 4.2.10. RAG e `llm_profiles.yaml`
 
-RAG may use LLMs in multiple stages:
+O RAG pode usar LLM em diferentes etapas:
 
 ```text
-rag_rewriter    -> rewrites the user question
-rag_compressor  -> compresses retrieved documents/context
-rag_generation  -> generates the final grounded answer
+rag_rewriter    -> reescreve a pergunta do usuário
+rag_compressor  -> comprime documentos/contexto recuperado
+rag_generation  -> gera a resposta final fundamentada
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 rag_rewriter:
@@ -628,15 +629,15 @@ rag_generation:
   max_tokens: 1800
 ```
 
-This allows different models to be used for different RAG pipeline tasks.
+Isso permite usar modelos diferentes para tarefas diferentes do pipeline RAG.
 
 ---
 
-### 4.2.11. Memory and `llm_profiles.yaml`
+### 4.2.11. Memória e `llm_profiles.yaml`
 
-LLM-based summary memory should use the `summary_memory` profile.
+A memória de resumo, quando usa LLM, deve usar o profile `summary_memory`.
 
-Example:
+Exemplo:
 
 ```yaml
 summary_memory:
@@ -646,15 +647,15 @@ summary_memory:
   max_tokens: 1200
 ```
 
-This profile is used when the framework needs to summarize long conversations, compact history, or preserve conversational memory without loading all previous messages.
+Esse profile é usado quando o framework precisa resumir conversas longas, compactar histórico ou manter memória conversacional sem carregar todas as mensagens anteriores.
 
 ---
 
-### 4.2.12. Supervisor and router
+### 4.2.12. Supervisor e router
 
-The supervisor and router are critical flow-control components.
+O supervisor e o router são pontos críticos de controle de fluxo.
 
-Example:
+Exemplo:
 
 ```yaml
 supervisor:
@@ -670,11 +671,11 @@ router:
   max_tokens: 500
 ```
 
-They usually use temperature `0` because routing decisions should be predictable.
+Normalmente eles usam temperatura `0`, porque a decisão de rota precisa ser previsível.
 
 ---
 
-### 4.2.13. Recommended full example
+### 4.2.13. Exemplo completo recomendado
 
 ```yaml
 profiles:
@@ -762,11 +763,11 @@ profiles:
 
 ---
 
-### 4.2.14. How to test whether a profile is being respected
+### 4.2.14. Como testar se o profile está sendo respeitado
 
-A simple test is to intentionally configure a non-existent model in a specific profile.
+Uma forma simples de testar é colocar propositalmente um modelo inexistente em um profile específico.
 
-Example:
+Exemplo:
 
 ```yaml
 judge:
@@ -776,33 +777,33 @@ judge:
   max_tokens: 800
 ```
 
-Then run a flow that actually invokes an LLM judge.
+Depois, execute um fluxo que realmente chame um judge LLM.
 
-If the framework respects the profile, the call should fail because the model does not exist.
+Se o framework estiver respeitando o profile, a chamada deve falhar, porque o modelo não existe.
 
-The same test can be done with:
+O mesmo teste pode ser feito com:
 
 ```text
 guardrail
-grl
-rag_rewriter
-rag_compressor
-rag_generation
-summary_memory
-supervisor
-router
-billing_agent
+ grl
+ rag_rewriter
+ rag_compressor
+ rag_generation
+ summary_memory
+ supervisor
+ router
+ billing_agent
 ```
 
-However, you must ensure that the component is actually executed in the flow.
+Mas é preciso garantir que o componente seja realmente executado no fluxo.
 
 ---
 
-### 4.2.15. Warning about silent fallback
+### 4.2.15. Atenção sobre fallback silencioso
 
-One important concern in agent architectures is avoiding silent fallback when an explicit profile was configured.
+Um ponto importante em arquiteturas de agentes é evitar fallback silencioso quando um profile explícito foi configurado.
 
-If the user configured:
+Se o usuário configurou:
 
 ```yaml
 judge:
@@ -810,243 +811,254 @@ judge:
   model: xopenai.gpt-4.1
 ```
 
-then the framework should not silently ignore the error and fall back to another model, unless that fallback is explicitly configured.
+então o framework não deve ignorar o erro e cair automaticamente para outro modelo, a menos que isso esteja explicitamente configurado.
 
-Recommended rule:
+A regra recomendada é:
 
 ```text
-explicit profile + real provider + invalid model = visible error
+profile explícito + provider real + modelo inválido = erro visível
 ```
 
-This prevents situations where the team believes it is testing one model, while the framework silently uses another.
+Isso evita situações em que o time acredita estar testando um modelo, mas o framework está usando outro silenciosamente.
 
 ---
 
-### 4.2.16. Final summary
+### 4.2.16. Resumo final
 
-`llm_profiles.yaml` is the framework's per-component LLM configuration layer.
+O `llm_profiles.yaml` é a camada de configuração por componente do framework.
 
-It allows you to:
+Ele permite:
 
-- Separate models by function.
-- Use different temperatures per component.
-- Test specific models in specific inference points.
-- Avoid depending on a single global model in `.env`.
-- Make guardrails, judges, RAG, memory, supervisor, and agents more controllable.
+- Separar modelos por função.
+- Usar temperaturas diferentes por componente.
+- Testar modelos específicos em pontos específicos.
+- Evitar que tudo dependa de um único modelo global no `.env`.
+- Tornar o comportamento de guardrails, judges, RAG, memória, supervisor e agentes mais controlável.
 
-Main rule:
+Regra principal:
 
 ```text
-Without llm_profiles.yaml:
-  .env controls everything.
+Sem llm_profiles.yaml:
+  .env governa tudo.
 
-With llm_profiles.yaml:
-  each component uses its own profile.
-  .env remains as fallback for missing keys or legacy mode.
+Com llm_profiles.yaml:
+  cada componente usa seu profile.
+  o .env fica como fallback para chaves ausentes ou para o modo legado.
 ```
 
 ---
 
-## 5. Creating a new agent
+## 5. Criando um novo agente
 
-In this example, we will create an agent called `finance_agent` for generic financial service.
+Neste exemplo, vamos criar um agente chamado `financeiro_agent` para atendimento financeiro genérico.
 
-### 5.1. Before the code: what is an agent in this framework?
+### 5.1. Antes do código: o que é um agente neste framework?
 
-An agent is a domain class that receives the `state` from LangGraph, interprets the intent chosen by the router or supervisor, collects evidence, calls tools/RAG/LLM when necessary, and returns a decision for the workflow to continue.
+Um agente é uma classe de domínio que recebe o `state` do LangGraph, interpreta a intenção escolhida pelo roteador ou supervisor, coleta evidências, chama tools/RAG/LLM quando necessário e retorna uma decisão para o workflow continuar.
 
-It should not decide on its own everything that the framework already decides. For example:
-
-```text
-The agent does not create a session.
-The agent does not open SSE.
-The agent does not compile LangGraph.
-The agent does not create a checkpoint.
-The agent does not run global guardrails.
-The agent does not call the external system directly when there is an MCP Tool Router.
-```
-
-The agent must answer questions such as:
+Ele não deve decidir sozinho tudo que o framework já decide. Por exemplo:
 
 ```text
-What business problem am I solving?
-What data do I need to respond securely?
-Which tools can provide this data?
-Which domain rules prevent or authorize an action?
-What response should be returned to the user?
-What IC events do I need to issue for the journey audit?
+O agente não cria sessão.
+O agente não abre SSE.
+O agente não compila LangGraph.
+O agente não cria checkpoint.
+O agente não executa guardrails globais.
+O agente não chama sistema externo diretamente quando existe MCP Tool Router.
 ```
 
-### 5.2. Responsibilities of the `app/agents/financeiro_agent.py file`
+O agente deve responder perguntas como:
 
-This file must contain the specific logic of the financial agent. It must:
+```text
+Qual problema de negócio estou resolvendo?
+Quais dados preciso para responder com segurança?
+Quais tools podem fornecer esses dados?
+Quais regras de domínio impedem ou autorizam uma ação?
+Qual resposta deve ser devolvida ao usuário?
+Quais eventos IC preciso emitir para auditoria da jornada?
+```
 
-1. Receive the `state`.
-2. Separate `context`, `session`, `business_context` and `tool_arguments`.
-3. Issue start IC using `AgentRuntimeMixin`.
-4. Collect context from MCP tools, if any, using the framework's MCP Tool Router.
-5. Collect RAG context, if any, using the framework's generic RAG.
-6. Set up a domain prompt.
-7. Call the LLM through the common runtime, with cache and telemetry.
-8. Assemble a standardized response.
-9. Issue completion IC.
-10. Return data to the workflow.
+### 5.2. Responsabilidades do arquivo `app/agents/financeiro_agent.py`
+
+Esse arquivo deve conter a lógica específica do agente financeiro. Ele deve:
+
+1. Receber o `state`.
+2. Separar `context`, `session`, `business_context` e `tool_arguments`.
+3. Emitir IC de início usando `AgentRuntimeMixin`.
+4. Coletar contexto de tools MCP, se houver, usando o MCP Tool Router do framework.
+5. Coletar contexto RAG, se houver, usando o RAG genérico do framework.
+6. Montar um prompt de domínio.
+7. Chamar o LLM pelo runtime comum, com cache e telemetria.
+8. Montar uma resposta padronizada.
+9. Emitir IC de conclusão.
+10. Retornar dados para o workflow.
 
 
-### 5.2.1. Understanding `state`, `context`, `session`, `business_context` and `tool_arguments`
+### 5.2.1. Entendendo `state`, `context`, `session`, `business_context` e `tool_arguments`
 
-Before copying the agent code, the developer needs to understand **where the data comes from**. In a corporate agent, the most common mistake is to take any field directly from the `state` without knowing if that data came from the channel, the gateway, the identity resolver, the router, or the user.
+Antes de copiar o código do agente, o desenvolvedor precisa entender **de onde vêm os dados**. Em um agente corporativo, o erro mais comum é pegar qualquer campo diretamente do `state` sem saber se aquele dado veio do canal, do gateway, do identity resolver, do roteador ou do usuário.
 
-The `state` is the complete envelope of the LangGraph execution. Within it, there is usually a `context`, which is the context normalized by the framework.
+O `state` é o envelope completo da execução do LangGraph. Dentro dele normalmente existe um `context`, que é o contexto normalizado pelo framework.
 
-Within `context`, if the project uses **Agent Gateway / Global Supervisor**, it is common to also have a `session` block:
+Dentro de `context`, se o projeto usa **Agent Gateway / Global Supervisor**, é comum existir também um bloco `session`:
 
 ```python
 ctx = state.get("context") or {}
 session = ctx.get("session") or {}
 ```
 
-Each block has a different role:
+O papel de cada bloco é diferente:
 
 ```text
 state
-Complete state of the current workflow. Loads text, intent, route, partial response,
-MCP results, guardrail data, checkpoint, and other technical fields.
+  Estado completo do workflow atual. Carrega texto, intent, route, resposta parcial,
+  resultados MCP, dados de guardrail, checkpoint e outros campos técnicos.
 
 context
-Normalized context of the current message. It usually comes from the Channel Gateway,
-Identity Resolver, and Agent Gateway.
+  Contexto normalizado da mensagem atual. Normalmente vem do Channel Gateway,
+  Identity Resolver e Agent Gateway.
 
 session
-Session and channel data. Helps you know who is talking, through which channel,
-in which tenant, which global session is active, and which backend/agent is responding.
+  Dados da sessão e do canal. Ajuda a saber quem está conversando, por qual canal,
+  em qual tenant, qual sessão global está ativa e qual backend/agente está atendendo.
 
 business_context
-Business data that has already been normalized. Example: customer_key, contract_key,
-interaction_key, session_key, protocol_id, invoice_id, order_id.
+  Dados de negócio já normalizados. Exemplo: customer_key, contract_key,
+  interaction_key, session_key, protocol_id, invoice_id, order_id.
 
 tool_arguments
-Explicit parameters already prepared for tools/MCP. When it exists, it must have
-priority over inferences made by the agent.
+  Parâmetros explícitos já preparados para tools/MCP. Quando existe, deve ter
+  prioridade sobre inferências feitas pelo agente.
 ```
 
-The recommended order of trust is:
+A ordem de confiança recomendada é:
 
 ```text
-1. explicit tool_arguments
-2. business_context resolved by the framework
-3. standardized context
-4. session and session.metadata, when they come from the Agent Gateway
-5. direct state
-6. original user text, for complementary extraction only
-   ```
-
-This order avoids two problems:
-
-```text
-Problem 1: ignoring data already resolved by the Gateway/Identity Resolver.
-Problem 2: overwriting a canonical parameter with a raw and less reliable value.
+1. tool_arguments explícitos
+2. business_context resolvido pelo framework
+3. context normalizado
+4. session e session.metadata, quando vierem do Agent Gateway
+5. state direto
+6. texto original do usuário, apenas para extração complementar
 ```
 
-Practical example: if the `business_context.customer_key` has already been resolved by the framework, the agent should not prefer a generic `session user_id` just because it exists. The `user_id` identifies the user in the channel; the `customer_key` identifies the customer in the business.
+Essa ordem evita dois problemas:
 
-Even if a simple agent does not use `session` directly, there is a difference between **technical session** and **business context**.
+```text
+Problema 1: ignorar dados já resolvidos pelo Gateway/Identity Resolver.
+Problema 2: sobrescrever um parâmetro canônico com um valor bruto e menos confiável.
+```
 
-### 5.2.2. Understanding the `AgentRuntimeMixin` class in `runtime.py`
+Exemplo prático: se o `business_context.customer_key` já foi resolvido pelo framework, o agente não deve preferir um `user_id` genérico da sessão apenas porque ele existe. O `user_id` identifica o usuário no canal; o `customer_key` identifica o cliente no negócio.
 
-Before writing a new agent, the developer needs to understand why almost all examples inherit from:
+Mesmo que um agente simples não use `session` diretamente, existe uma diferença entre **sessão técnica** e **contexto de negócio**.
+
+### 5.2.2. Entendendo a classe `AgentRuntimeMixin` de `runtime.py`
+
+Antes de escrever um agente novo, o desenvolvedor precisa entender por que quase todos os exemplos herdam de:
 
 ```python
 from app.agents.runtime import AgentRuntimeMixin
 ```
 
-`AgentRuntimeMixin` is an operational convenience layer for the agent. It is not the agent, it is not the workflow, and it does not contain a business rule. It exists to prevent each agent from having to re-implement the same technical capabilities in different ways.
+O `AgentRuntimeMixin` é uma camada de conveniência operacional para o agente. Ele não é o agente, não é o workflow e não contém regra de negócio. Ele existe para evitar que cada agente tenha que reimplementar, de forma diferente, as mesmas capacidades técnicas.
 
-In simple terms:
-
-```text
-AgentRuntimeMixin = standardized agent toolbox
-FinanceiroAgent  = business rule that uses this toolbox
-AgentWorkflow    = LangGraph engine that calls the agent
-Framework        = complete corporate infrastructure
-```
-
-Without `AgentRuntimeMixin`, each developer would tend to write their own code to:
+Em termos simples:
 
 ```text
-issue IC/NOC/GRL
-call MCP Tool Router
-call RAG
-mount LLM cache
-call LLM
-mount cache key
-handle absence of observer, cache, RAG or tools
+AgentRuntimeMixin = caixa de ferramentas padronizada do agente
+FinanceiroAgent  = regra de negócio que usa essa caixa de ferramentas
+AgentWorkflow    = motor LangGraph que chama o agente
+Framework        = infraestrutura corporativa completa
 ```
 
-This would generate inconsistent agents. One agent would issue IC one way, another would call MCP directly, another would ignore cache, another would break when the observer was disabled. The mixin avoids this problem.
+Sem o `AgentRuntimeMixin`, cada desenvolvedor tenderia a escrever código próprio para:
 
-#### 5.2.2.1. What `AgentRuntimeMixin` offers
+```text
+emitir IC/NOC/GRL
+chamar MCP Tool Router
+chamar RAG
+montar cache de LLM
+chamar LLM
+montar chave de cache
+tratar ausência de observer, cache, RAG ou tools
+```
 
-In the template, `AgentRuntimeMixin` concentrates utility methods such as:
+Isso geraria agentes inconsistentes. Um agente emitiria IC de um jeito, outro chamaria MCP diretamente, outro ignoraria cache, outro quebraria quando o observer estivesse desabilitado. O mixin evita esse problema.
 
-| Method | What it's for | When the agent uses it |
+#### 5.2.2.1. O que o `AgentRuntimeMixin` oferece
+
+No template, o `AgentRuntimeMixin` concentra métodos utilitários como:
+
+| Método | Para que serve | Quando o agente usa |
 |---|---|---|
-| `_emit_ic()` | Emits business/audit event | start, end, business decision, collected context |
-| `_emit_noc()` | Emits operational event | technical error, timeout, fallback, unavailability |
-| `_emit_grl()` | Issues custom governance event | domain rule blocked or sanitized something |
-| `_retrieve_rag_context()` | Queries the framework's generic RAG | agent needs document context |
-| `_collect_mcp_context()` | Calls the MCP tools declared in `state.mcp_tools` | agent needs to consult external systems |
-| `_cache_get()` | Reads generic cache | advanced use, usually indirect |
-| `_cache_set()` | Writes generic cache | advanced use, usually indirect |
-| `_llm_cache_key()` | Creates a stable LLM cache key | normally used internally |
-| `_invoke_llm_cached()` | Calls the LLM with cache and telemetry | we need to generate a response with LLM |
+| `_emit_ic()` | Emite evento de negócio/auditoria | início, fim, decisão de negócio, contexto coletado |
+| `_emit_noc()` | Emite evento operacional | erro técnico, timeout, fallback, indisponibilidade |
+| `_emit_grl()` | Emite evento de governança customizado | regra de domínio bloqueou ou sanitizou algo |
+| `_retrieve_rag_context()` | Consulta o RAG genérico do framework | agente precisa de contexto documental |
+| `_collect_mcp_context()` | Chama as tools MCP declaradas no `state.mcp_tools` | agente precisa consultar sistemas externos |
+| `_cache_get()` | Lê cache genérico | uso avançado, normalmente indireto |
+| `_cache_set()` | Grava cache genérico | uso avançado, normalmente indireto |
+| `_llm_cache_key()` | Monta chave estável de cache do LLM | normalmente usado internamente |
+| `_invoke_llm_cached()` | Chama o LLM com cache e telemetria | agente precisa gerar resposta com LLM |
 
-The developer should think like this:
-
-```text
-I write the business rule in run().
-When I need infrastructure, I call a helper from AgentRuntimeMixin.
-```
-
-#### 5.2.2.2. What `AgentRuntimeMixin` should not do
-
-The mixin must not contain a specific business rule, for example:
+O desenvolvedor deve pensar assim:
 
 ```text
-calculate invoice dispute
-consult ANATEL protocol directly
-open SR Siebel directly
-classify TIM cancellation
-calculate payment slip amount
-validate specific retail product
+Eu escrevo a regra de negócio no run().
+Quando precisar de infraestrutura, chamo um helper do AgentRuntimeMixin.
 ```
 
-These rules belong to the agent or the domain's MCP Server.
+#### 5.2.2.2. O que o `AgentRuntimeMixin` não deve fazer
 
-The correct boundary is:
+O mixin não deve conter regra de negócio específica, por exemplo:
+
+```text
+calcular contestação de fatura
+consultar protocolo ANATEL diretamente
+abrir SR Siebel diretamente
+classificar cancelamento TIM
+calcular valor de boleto financeiro
+validar produto de varejo específico
+```
+
+Essas regras pertencem ao agente ou ao MCP Server do domínio.
+
+A fronteira correta é:
 
 ```text
 AgentRuntimeMixin
-knows how to call MCP, RAG, cache, LLM and observer
+  sabe chamar MCP, RAG, cache, LLM e observer
 
-Specific agent
-knows what evidence it needs, what rules to apply, and how to respond
+Agente específico
+  sabe quais evidências precisa, quais regras aplicar e como responder
 
 MCP Server
-knows how to talk to a real system, mock, bank, REST, SOAP or legacy service
+  sabe falar com sistema real, mock, banco, REST, SOAP ou serviço legado
 ```
 
-#### 5.2.2.3. How the mixin receives its resources
+#### 5.2.2.3. Como o mixin recebe seus recursos
 
-`AgentRuntimeMixin` does not create `llm`, `tool_router`, `rag_service`, `cache` or `observer`. It expects the workflow to inject these objects into the agent constructor.
+O `AgentRuntimeMixin` não cria `llm`, `tool_router`, `rag_service`, `cache` ou `observer`. Ele espera que o workflow injete esses objetos no construtor do agente.
 
-Therefore, this pattern appears in the agent:
+Por isso, no agente aparece este padrão:
 
 ```python
 class FinanceiroAgent(AgentRuntimeMixin):
-name = "financeiro_agent"
+    name = "financeiro_agent"
 
-    def __init__(self, llm, telemetry=None, tool_router=None, rag_service=None, cache=None, settings=None, observer=None):
+    def __init__(
+            self,
+            llm,
+            telemetry=None,
+            tool_router=None,
+            rag_service=None,
+            cache=None,
+            settings=None,
+            observer=None,
+            memory=None,
+            summary_memory=None,
+    ):
         self.llm = llm
         self.telemetry = telemetry
         self.tool_router = tool_router
@@ -1054,42 +1066,44 @@ name = "financeiro_agent"
         self.cache = cache
         self.settings = settings
         self.observer = observer
+        self.memory = memory
+        self.summary_memory = summary_memory
 ```
 
-This means:
+Isso significa:
 
 ```text
-llm          = generation engine configured by the framework
-telemetry    = spans/technical events
-tool_router  = standardized MCP router
-rag_service  = document/graph/vector search
-cache        = Redis/memory/etc. cache
-settings     = settings loaded from .env/YAML
-observer     = IC/NOC/GRL emitter
-memory       = conversation memory
-summary_memory=summary memory
+llm          = motor de geração configurado pelo framework
+telemetry    = spans/eventos técnicos
+tool_router  = roteador MCP padronizado
+rag_service  = busca documental/grafo/vetor
+cache        = cache Redis/memory/etc.
+settings     = configurações carregadas do .env/YAML
+observer     = emissor IC/NOC/GRL
+memory       = memória de conversação
+summary_memory=memória sumarizada
 ```
 
-The agent receives these objects ready-made. It should not create a new instance on its own within `run()`.
+O agente recebe esses objetos prontos. Ele não deve criar uma nova instância por conta própria dentro do `run()`.
 
-#### 5.2.2.4. How`_emit_ic()`,`_emit_noc()`, and`_emit_grl()` help
+#### 5.2.2.4. Como `_emit_ic()`, `_emit_noc()` e `_emit_grl()` ajudam
 
-An agent needs to be auditable, but it should not break if observability is turned off.
+Um agente precisa ser auditável, mas não deveria quebrar se a observabilidade estiver desligada.
 
-Therefore, the mixin's emission methods are **fail-open**: if there is no `observer`, or if an error occurs when emitting an event, the business journey continues.
+Por isso, os métodos de emissão do mixin são **fail-open**: se não houver `observer`, ou se ocorrer erro ao emitir evento, a jornada de negócio continua.
 
-Example of IC:
+Exemplo de IC:
 
 ```python
 await self._emit_ic(
-"IC.FINANCEIRO_AGENT_STARTED",
-state,
-{"business_component": "financeiro"},
-component="agent.financeiro.start",
+    "IC.FINANCEIRO_AGENT_STARTED",
+    state,
+    {"business_component": "financeiro"},
+    component="agent.financeiro.start",
 )
 ```
 
-The developer does not need to manually assemble all the basic metadata. The mixin already tries to include information such as:
+O desenvolvedor não precisa montar manualmente todos os metadados básicos. O mixin já tenta incluir informações como:
 
 ```text
 session_id
@@ -1102,63 +1116,63 @@ message_id
 channel_id
 ```
 
-The rule of thumb is:
+A regra prática é:
 
 ```text
-Use _emit_ic() for business milestones.
-Use _emit_noc() for an operational problem.
-Use _emit_grl() for domain-specific governance.
+Use _emit_ic() para marco de negócio.
+Use _emit_noc() para problema operacional.
+Use _emit_grl() para governança específica do domínio.
 ```
 
-#### 5.2.2.5. How`_collect_mcp_context()` works
+#### 5.2.2.5. Como `_collect_mcp_context()` funciona
 
-The `_collect_mcp_context(state)` method reads the list of tools already chosen by the router:
+O método `_collect_mcp_context(state)` lê a lista de tools já escolhidas pelo roteador:
 
 ```python
-tools = state.get("mcp_tools") or[]
+ tools = state.get("mcp_tools") or []
 ```
 
-Then it calls the framework's `tool_router` for each tool. The agent does not need to know if the tool uses HTTP, Docker, mock or a real service.
+Depois chama o `tool_router` do framework para cada tool. O agente não precisa saber se a tool usa HTTP, Docker, mock ou serviço real.
 
-Conceptual flow:
+Fluxo conceitual:
 
 ```text
-routing.yaml chooses intent
-↓
-intent defines mcp_tools
-↓
-state.mcp_tools receives the list of tools
-↓
+routing.yaml escolhe intent
+  ↓
+intent define mcp_tools
+  ↓
+state.mcp_tools recebe a lista de tools
+  ↓
 AgentRuntimeMixin._collect_mcp_context()
-↓
+  ↓
 MCP Tool Router
-↓
+  ↓
 MCP Server
-↓
-normalized result returns to the agent
+  ↓
+resultado normalizado volta ao agente
 ```
 
-Example in the agent:
+Exemplo no agente:
 
 ```python
 tool_context = await self._collect_mcp_context(state)
 ```
 
-The developer should use this method when it is sufficient to call the tools defined by the intent.
+O desenvolvedor deve usar esse método quando basta chamar as tools definidas pela intent.
 
-If the agent needs to choose special arguments per tool, skip dangerous tools, require confirmation, or set up additional parameters, it can implement its own method in the agent and call the router in a more controlled way, as in the `BackofficeAgent` example.
+Se o agente precisar escolher argumentos especiais por tool, pular tools perigosas, exigir confirmação ou montar parâmetros adicionais, ele pode implementar um método próprio no agente e chamar o router de forma mais controlada, como no exemplo do `BackofficeAgent`.
 
-#### 5.2.2.6. How`_retrieve_rag_context()` works
+#### 5.2.2.6. Como `_retrieve_rag_context()` funciona
 
-The `_retrieve_rag_context(state)` method queries the generic RAG configured in the framework.
+O método `_retrieve_rag_context(state)` consulta o RAG genérico configurado no framework.
 
-It uses as base text:
+Ele usa como texto base:
 
 ```text
-state.sanitized_input or state.user_text
+state.sanitized_input ou state.user_text
 ```
 
-And it tries to define a search namespace from:
+E tenta definir um namespace de busca a partir de:
 
 ```text
 agent_profile.rag_namespace
@@ -1167,100 +1181,100 @@ route
 default
 ```
 
-You can also use information from `business_context`, such as `customer_key` or `contract_key`, to enrich graph search or related context.
+Também pode usar informações do `business_context`, como `customer_key` ou `contract_key`, para enriquecer busca em grafo ou contexto relacionado.
 
-Example:
+Exemplo:
 
 ```python
 rag_context, rag_metadata = await self._retrieve_rag_context(state)
 ```
 
-The agent uses `rag_context` in the prompt and can return `rag_metadata` for auditing/debugging.
+O agente usa `rag_context` no prompt e pode retornar `rag_metadata` para auditoria/debug.
 
-Rule of thumb:
+Regra prática:
 
 ```text
-Use RAG when the answer depends on a document, policy, knowledge base, or uncoded content.
-Do not use RAG to replace an operational query that must be made by an MCP tool.
+Use RAG quando a resposta depende de documento, política, base de conhecimento ou conteúdo não codificado.
+Não use RAG para substituir uma consulta operacional que deve ser feita por tool MCP.
 ```
 
-#### 5.2.2.7. How`_invoke_llm_cached()` works
+#### 5.2.2.7. Como `_invoke_llm_cached()` funciona
 
-The `_invoke_llm_cached()` method calls the LLM by passing messages in chat format:
+O método `_invoke_llm_cached()` chama o LLM passando mensagens no formato chat:
 
 ```python
-answer = await self._invoke_llm_cached(state, "FinanceAgent", messages)
+answer = await self._invoke_llm_cached(state, "FinanceiroAgent", messages)
 ```
 
-Before calling the LLM, it assembles a cache key considering elements such as:
+Antes de chamar o LLM, ele monta uma chave de cache considerando elementos como:
 
 ```text
-agent name
+nome do agente
 tenant_id
 agent_id
 intent
 customer_key
 contract_key
 interaction_key
-user text
-prompt content
+texto do usuário
+conteúdo do prompt
 ```
 
-If a response already exists in the cache, the method returns the cached value. If it does not exist, it calls the LLM, writes to the cache, and returns the response.
+Se já existir resposta no cache, o método retorna o valor cacheado. Se não existir, chama o LLM, grava no cache e retorna a resposta.
 
-This prevents each agent from implementing caching differently.
+Isso evita que cada agente implemente cache de forma diferente.
 
-The developer should understand that caching is useful for deterministic prompts or repeated queries, but should be used with caution for sensitive actions. The agent should not confirm an external operation just because an LLM response came from the cache. Operational confirmations must depend on the actual return from the tool.
+O desenvolvedor deve entender que o cache é útil para prompts determinísticos ou consultas repetidas, mas deve ser usado com cuidado em ações sensíveis. O agente não deve confirmar operação externa apenas porque uma resposta de LLM veio de cache. Confirmações operacionais devem depender de retorno real da tool.
 
-#### 5.2.2.8. When to use`_collect_mcp_context()` and when to create your own logic
+#### 5.2.2.8. Quando usar `_collect_mcp_context()` e quando criar lógica própria
 
-Use `_collect_mcp_context()` when:
+Use `_collect_mcp_context()` quando:
 
 ```text
-the intent has already defined the correct tools
-the canonical parameters are already in the business_context
-the execution can call all the tools in the list
-no tool represents a sensitive action
+a intent já definiu as tools corretas
+os parâmetros canônicos já estão no business_context
+a execução pode chamar todas as tools da lista
+nenhuma tool representa ação sensível
 ```
 
-Create your own logic in the agent when:
+Crie lógica própria no agente quando:
 
 ```text
-a tool can only be called after explicit confirmation
-a tool requires additional arguments derived from the message
-a tool must be skipped if a required field is missing
-a registration/change tool cannot run automatically
-a sequence of tools depends on the previous result
+uma tool só pode ser chamada após confirmação explícita
+uma tool exige argumentos adicionais derivados da mensagem
+uma tool deve ser pulada se faltar campo obrigatório
+uma tool de registro/alteração não pode rodar automaticamente
+uma sequência de tools depende do resultado anterior
 ```
 
-Example of a safe rule:
+Exemplo de regra segura:
 
 ```python
 if tool.startswith("registrar_") and not action_text:
-return {"ok": False, "skipped": True, "reason": "action without explicit confirmation"}
+    return {"ok": False, "skipped": True, "reason": "ação sem confirmação explícita"}
 ```
 
-This is a domain rule and should stay in the agent, not in the mixin.
+Isso é regra de domínio e deve ficar no agente, não no mixin.
 
-#### 5.2.2.9. How the dev should read the `run()` of an agent that inherits the mixin
+#### 5.2.2.9. Como o dev deve ler o `run()` de um agente que herda o mixin
 
-When opening an agent, the developer should look for this mental structure:
+Ao abrir um agente, o desenvolvedor deve procurar esta estrutura mental:
 
 ```text
-1. Does the agent issue an initial IC?
-2. Does it read context/session/business_context in an organized way?
-3. Does it validate mandatory domain data?
-4. Does it call MCP using the mixin or its own controlled logic?
-5. Does it call RAG when it needs documentary knowledge?
-6. Does it build a prompt with evidence, not guesswork?
-7. Does it call LLM via _invoke_llm_cached()?
-8. Does it issue relevant IC/NOC/GRL?
-9. Does it return answer, next_state, mcp_results, and useful metadata?
-   ```
+1. O agente emite IC de início?
+2. Ele lê context/session/business_context de forma organizada?
+3. Ele valida dados obrigatórios do domínio?
+4. Ele chama MCP usando o mixin ou lógica própria controlada?
+5. Ele chama RAG quando precisa de conhecimento documental?
+6. Ele monta prompt com evidências, e não com chute?
+7. Ele chama LLM via _invoke_llm_cached()?
+8. Ele emite IC/NOC/GRL relevantes?
+9. Ele retorna answer, next_state, mcp_results e metadados úteis?
+```
 
-If the agent does this, it is using the framework correctly.
+Se o agente faz isso, ele está usando o framework corretamente.
 
-#### 5.2.2.10. Minimum example of correct use of the mixin
+#### 5.2.2.10. Exemplo mínimo de uso correto do mixin
 
 ```python
 async def run(self, state):
@@ -1301,7 +1315,7 @@ async def run(self, state):
         state,
         system_prompt=apply_agent_profile_prompt(
             state,
-            "You are a financial agent. Respond clearly, using data from available tools. Do not confirm financial actions without evidence and explicit confirmation."
+            "Você é um agente financeiro. Responda com clareza, usando dados das ferramentas quando disponíveis. Não confirme ações financeiras sem evidência e confirmação explícita."
         ),
         mcp_results=tool_context,
         rag_context=rag_context,
@@ -1331,129 +1345,130 @@ async def run(self, state):
     return result
 ```
 
-This example shows the intention of the mixin: the developer writes the agent's reasoning, but delegates infrastructure to standardized methods.
+Esse exemplo mostra a intenção do mixin: o desenvolvedor escreve o raciocínio do agente, mas delega infraestrutura para métodos padronizados.
 
-#### 5.2.2.11. Common mistakes when using `AgentRuntimeMixin`
-
-```text
-Inherit from AgentRuntimeMixin, but call REST directly inside the agent.
-Create another manual cache instead of using _invoke_llm_cached().
-Emit events directly in formats other than the observer.
-Placing a domain rule inside runtime.py.
-Using _collect_mcp_context() for an action tool without confirmation.
-Ignore business_context and get loose parameters from the payload.
-Treat global session_id and backend_session_id as if they were the same thing.
-Overwrite internal mixin methods unnecessarily.
-```
-
-The most important rule is:
+#### 5.2.2.11. Erros comuns ao usar o `AgentRuntimeMixin`
 
 ```text
-The mixin standardizes technical capabilities.
-The agent decides how to apply these capabilities to the domain.
+Herdar de AgentRuntimeMixin, mas chamar REST diretamente dentro do agente.
+Criar outro cache manual em vez de usar _invoke_llm_cached().
+Emitir eventos diretamente em formatos diferentes do observer.
+Colocar regra de domínio dentro do runtime.py.
+Usar _collect_mcp_context() para tool de ação sem confirmação.
+Ignorar business_context e pegar parâmetros soltos do payload.
+Tratar session_id global e backend_session_id como se fossem a mesma coisa.
+Sobrescrever métodos internos do mixin sem necessidade.
+```
+
+A regra mais importante é:
+
+```text
+O mixin padroniza capacidades técnicas.
+O agente decide como aplicar essas capacidades ao domínio.
 ```
 
 
-### 5.2.3. Understanding `messages`: the agent's conversational architecture
+### 5.2.3. Entendendo `messages`: arquitetura conversacional do agente
 
-After understanding `state`, `context`, `session`, `business_context`, `tool_arguments` and `AgentRuntimeMixin`, there is still a central piece to understand: `messages`.
+Depois de entender `state`, `context`, `session`, `business_context`, `tool_arguments` e `AgentRuntimeMixin`, falta entender uma peça central: `messages`.
 
-In an agent, `messages` is not just a list of texts. It is the **conversational contract** that will be sent to the LLM in that call. It is in this contract that the agent organizes instructions, the user's question, evidence, RAG context, MCP results, summarized memory, and the expected format of the response.
+Em um agente, `messages` não é apenas uma lista de textos. Ele é o **contrato conversacional** que será enviado ao LLM naquela chamada. É nesse contrato que o agente organiza instruções, pergunta do usuário, evidências, contexto RAG, resultados MCP, memória resumida e formato esperado da resposta.
 
-A minimal example is:
+Um exemplo mínimo é:
 
 ```python
 messages = [
-{
-    "role": "system",
-    "content": "You are a financial agent. Do not make up data.",
-},
-{
-    "role": "user",
-    "content": "I want to check my payment.",
-},]
+    {
+        "role": "system",
+        "content": "Você é um agente financeiro. Não invente dados.",
+    },
+    {
+        "role": "user",
+        "content": "Quero consultar meu pagamento.",
+    },
+]
 ```
 
-This format is common in modern conversational AI frameworks and providers. It appears, with minor variations, in OpenAI Chat Completions/Responses API, OCI Generative AI OpenAI-compatible, LangChain `ChatModel`, LangGraph, Semantic Kernel, LlamaIndex, and in architectures with tool calling and MCP.
+Esse formato é comum em frameworks e provedores modernos de IA conversacional. Ele aparece, com pequenas variações, em OpenAI Chat Completions/Responses API, OCI Generative AI OpenAI-compatible, LangChain `ChatModel`, LangGraph, Semantic Kernel, LlamaIndex e em arquiteturas com tool calling e MCP.
 
-The idea is simple:
+A ideia é simples:
 
 ```text
-The agent sets up a canonical conversation.
-AgentRuntimeMixin calls the standardized LLM provider.
-The provider adapts this conversation to the real backend.
+O agente monta uma conversa canônica.
+O AgentRuntimeMixin chama o provider LLM padronizado.
+O provider adapta essa conversa para o backend real.
 ```
 
-This allows the agent to continue writing `messages` in a predictable way, even if the project uses OCI Generative AI, OpenAI-compatible endpoint, LangChain, local Llama, mock or another provider underneath.
+Isso permite que o agente continue escrevendo `messages` de forma previsível, mesmo que por baixo o projeto use OCI Generative AI, OpenAI-compatible endpoint, LangChain, Llama local, mock ou outro provider.
 
-#### 5.2.3.1. Main roles of a message
+#### 5.2.3.1. Papéis principais de uma mensagem
 
-Each `message` item has at least one `role` and one `content`.
+Cada item de `messages` possui pelo menos um `role` e um `content`.
 
-| Role | What it's for |
+| Role | Para que serve |
 |---|---|
-| `system` | Defines the agent's identity, limits, policies, rules, and behavior. |
-| `user` | Represents the user's current request or an instruction contextualized by the framework. |
-| `assistant` | Represents previous model responses, when the history is explicitly included. |
-| `tool` | Represents tool results in flows with structured tool calling. |
-| `developer` | For some providers, it represents intermediate instructions from the developer or the application. |
+| `system` | Define identidade, limites, políticas, regras e comportamento do agente. |
+| `user` | Representa a solicitação atual do usuário ou uma instrução contextualizada pelo framework. |
+| `assistant` | Representa respostas anteriores do modelo, quando o histórico é incluído explicitamente. |
+| `tool` | Representa resultado de ferramenta em fluxos com tool calling estruturado. |
+| `developer` | Em alguns provedores, representa instruções intermediárias do desenvolvedor ou da aplicação. |
 
-In the template, the simplest pattern mainly uses:
-
-```text
-system → who the agent is, what they can do and what they cannot do
-user   → current message + evidence + business context + MCP + RAG
-```
-
-This pattern is intentionally simple to maintain compatibility with multiple runtimes.
-
-#### 5.2.3.2. What should go in the `system`
-
-The `system` must contain stable, higher-priority rules. It answers:
+No template, o padrão mais simples usa principalmente:
 
 ```text
-Who is this agent?
-What domain does it serve?
-What limits should it respect?
-What should it never make up?
-When should it ask for more data?
-When should he refuse an action?
-What tone and response format should it use?
+system → quem é o agente, o que ele pode fazer e o que ele não pode fazer
+user   → mensagem atual + evidências + contexto de negócio + MCP + RAG
 ```
 
-Example:
+Esse padrão é intencionalmente simples para manter compatibilidade com vários runtimes.
+
+#### 5.2.3.2. O que deve ir no `system`
+
+O `system` deve conter regras estáveis e de maior prioridade. Ele responde:
+
+```text
+Quem é este agente?
+Qual domínio ele atende?
+Quais limites ele deve respeitar?
+O que ele nunca deve inventar?
+Quando ele deve pedir mais dados?
+Quando ele deve recusar uma ação?
+Qual tom e formato de resposta deve usar?
+```
+
+Exemplo:
 
 ```python
 system_content = apply_agent_profile_prompt(
     state,
     """
-    You are a corporate financial agent.
-    Use only data provided by MCP, RAG, or business_context.
-    Do not confirm payment, write-off, settlement, or dispute without evidence from the tool.
-    If a mandatory identifier is missing, request only that piece of information.
-    Respond in a short, operational, and auditable manner.
+    Você é um agente financeiro corporativo.
+    Use somente dados fornecidos por MCP, RAG ou business_context.
+    Não confirme pagamento, baixa, acordo ou contestação sem evidência de tool.
+    Se faltar identificador obrigatório, peça apenas esse dado.
+    Responda de forma curta, operacional e auditável.
     """.strip(),
 )
 ```
 
-Critical rules must remain in the `system`, not hidden in the middle of the `user`.
+Regras críticas devem ficar no `system`, não escondidas no meio do `user`.
 
-#### 5.2.3.3. What should go in the `user`
+#### 5.2.3.3. O que deve ir no `user`
 
-The `user` must provide the current request and the context needed to respond. In the corporate agent, it usually contains:
+O `user` deve trazer o pedido atual e o contexto necessário para responder. No agente corporativo, ele normalmente contém:
 
 ```text
-current user message
-intent chosen by the router
-route/active agent
-normalized business_context
-MCP results
-RAG context
-relevant session metadata
-format instruction for the response
+mensagem atual do usuário
+intent escolhida pelo roteador
+route/agente ativo
+business_context normalizado
+resultados MCP
+contexto RAG
+metadados relevantes de sessão
+instrução de formato para a resposta
 ```
 
-Example:
+Exemplo:
 
 ```python
 messages = [
@@ -1464,137 +1479,137 @@ messages = [
     {
         "role": "user",
         "content": (
-            "User message:\n"
+            "Mensagem do usuário:\n"
             f"{user_text}\n\n"
-            "Intent and route chosen by the framework:\n"
+            "Intent e rota escolhidas pelo framework:\n"
             f"intent={state.get('intent')} route={state.get('route')}\n\n"
-            "Normalized business context:\n"
+            "Contexto de negócio normalizado:\n"
             f"customer_key={business_context.get('customer_key')}\n"
             f"contract_key={business_context.get('contract_key')}\n"
             f"interaction_key={business_context.get('interaction_key')}\n\n"
-            "MCP results:\n"
+            "Resultados MCP:\n"
             f"{tool_context}\n\n"
-            "RAG context:\n"
-            f"{rag_context or '[no RAG context]'}\n\n"
-            "Response instruction:\n"
-            "Respond only based on the evidence above. "
-            "If a required piece of evidence is missing, say it was not found."
+            "Contexto RAG:\n"
+            f"{rag_context or '[sem contexto RAG]'}\n\n"
+            "Instrução de resposta:\n"
+            "Responda somente com base nas evidências acima. "
+            "Se uma evidência obrigatória estiver ausente, diga que não foi encontrada."
         ),
     },
 ]
 ```
 
-Note that the example does not put the entire `state` in the prompt. It selects the relevant fields.
+Observe que o exemplo não joga o `state` inteiro no prompt. Ele seleciona os campos relevantes.
 
-#### 5.2.3.4. Relationship between `messages`, memory and history
+#### 5.2.3.4. Relação entre `messages`, memória e histórico
 
-`messages` is not the agent's persistent memory.
+`messages` não é a memória persistente do agente.
 
 ```text
-Persistent memory
-It is in the framework's repository/memory.
-It can survive multiple interactions.
-It can be summarized, compressed or consulted.
+Memória persistente
+  Fica no repositório/memória do framework.
+  Pode sobreviver a várias interações.
+  Pode ser resumida, compactada ou consultada.
 
 messages
-This is the payload sent to the LLM in a specific call.
-It can include a memory summary.
-It may include part of the history.
-It should not become a complete dump of the conversation.
+  É o payload enviado ao LLM em uma chamada específica.
+  Pode incluir um resumo de memória.
+  Pode incluir parte do histórico.
+  Não deve virar um dump completo da conversa.
 ```
 
-If the framework has already loaded the conversation history or summary, the agent should use only the necessary excerpt. Manually duplicating history increases cost, latency, and the risk of inconsistency.
+Se o framework já carregou histórico ou resumo de conversa, o agente deve usar apenas o trecho necessário. Duplicar histórico manualmente aumenta custo, latência e risco de inconsistência.
 
-#### 5.2.3.5. Relationship between `messages`, MCP and RAG
+#### 5.2.3.5. Relação entre `messages`, MCP e RAG
 
-MCP and RAG produce evidence. The LLM uses this evidence to draft the response.
+MCP e RAG produzem evidências. O LLM usa essas evidências para redigir a resposta.
 
 ```text
 MCP Tool Router
-queries systems, mocks, services or external actions
-returns structured data
+  consulta sistemas, mocks, serviços ou ações externas
+  retorna dados estruturados
 
 RAG
-searches for document context
-returns relevant excerpts and metadata
+  busca contexto documental
+  retorna trechos relevantes e metadados
 
 messages
-organize this evidence into a conversation for the LLM
+  organizam essas evidências em uma conversa para o LLM
 ```
 
-A good agent makes it clear to the LLM what is evidence and what is instruction.
+Um bom agente deixa claro para o LLM o que é evidência e o que é instrução.
 
-Avoid mixing everything together in an unstructured text. Use blocks instead:
+Evite misturar tudo em um texto sem estrutura. Prefira blocos:
 
 ```text
-Instructions:
-- Don't make up data.
+Instruções:
+- Não invente dados.
 
-User message:
+Mensagem do usuário:
 ...
 
-MCP evidence:
+Evidências MCP:
 ...
 
-RAG context:
+Contexto RAG:
 ...
 
-Expected format:
+Formato esperado:
 ...
 ```
 
-This organization improves traceability and reduces hallucination.
+Essa organização melhora a rastreabilidade e reduz alucinação.
 
-#### 5.2.3.6. Compatibility with market frameworks
+#### 5.2.3.6. Compatibilidade com frameworks de mercado
 
-The `messages` standard is compatible with most of the conversational AI ecosystem, but there are differences between providers.
+O padrão de `messages` é compatível com a maior parte do ecossistema de IA conversacional, mas existem diferenças entre provedores.
 
-| Framework/provider | Conceptual compatibility | Attention |
+| Framework/provedor | Compatibilidade conceitual | Atenção |
 |---|---|---|
-| OpenAI Chat/Responses | High | Roles, tool calls, and multimodal formats may vary by API. |
-| OCI Generative AI OpenAI-compatible | High | It usually accepts a format similar to OpenAI-compatible. |
-| LangChain `ChatModel` | High | Can convert dicts to `SystemMessage`, `HumanMessage`, `AIMessage`. |
-| LangGraph | High | The state can load `messages` or the agent can assemble messages per call. |
-| Semantic Kernel | High | Uses equivalent concepts of chat history and roles. |
-| LlamaIndex | High | Can be adapted for chat engine or completion engine. |
-| Anthropic Messages API | Medium/High | May require adaptations of system prompt and roles. |
-| Local models | Variable | Some expect a specific chat template. |
+| OpenAI Chat/Responses | Alta | Roles, tool calls e formatos multimodais podem variar por API. |
+| OCI Generative AI OpenAI-compatible | Alta | Normalmente aceita formato semelhante ao OpenAI-compatible. |
+| LangChain `ChatModel` | Alta | Pode converter dicts para `SystemMessage`, `HumanMessage`, `AIMessage`. |
+| LangGraph | Alta | O state pode carregar `messages` ou o agente pode montar messages por chamada. |
+| Semantic Kernel | Alta | Usa conceitos equivalentes de chat history e roles. |
+| LlamaIndex | Alta | Pode adaptar para chat engine ou completion engine. |
+| Anthropic Messages API | Média/Alta | Pode exigir adaptações de system prompt e roles. |
+| Modelos locais | Variável | Alguns esperam chat template específico. |
 
-Therefore, the agent should not directly call specific SDKs. It assembles `messages` and delegates the call to:
+Por isso, o agente não deve chamar diretamente SDKs específicos. Ele monta `messages` e delega a chamada para:
 
 ```python
 answer = await self._invoke_llm_cached(state, "FinanceiroAgent", messages)
 ```
 
-Thus, the adaptation for the provider is centralized in the runtime/framework.
+Assim, a adaptação para o provider fica centralizada no runtime/framework.
 
-#### 5.2.3.7. Common pitfalls when assembling `messages`
+#### 5.2.3.7. Pitfalls comuns ao montar `messages`
 
-**Pitfall 1 — Sending the entire `state` to the LLM**
+**Pitfall 1 — Enviar o `state` inteiro ao LLM**
 
-Bad:
+Ruim:
 
 ```python
-{"role": "user", "content": f"Full state: {state}"}
+{"role": "user", "content": f"State completo: {state}"}
 ```
 
-Better:
+Melhor:
 
 ```python
 {"role": "user", "content": f"customer_key={business_context.get('customer_key')}"}
 ```
 
-The `state` can contain technical data, sensitive fields, history, checkpoint, and unnecessary information.
+O `state` pode conter dados técnicos, campos sensíveis, histórico, checkpoint e informações desnecessárias.
 
-**Pitfall 2 — Sending huge objects without curation**
+**Pitfall 2 — Mandar objetos enormes sem curadoria**
 
-Bad:
+Ruim:
 
 ```python
-f"Full results: {mcp_results}"
+f"Resultados completos: {mcp_results}"
 ```
 
-Better:
+Melhor:
 
 ```python
 resumo_tools = [
@@ -1604,85 +1619,86 @@ resumo_tools = [
         "status": r.get("status"),
         "evidence": r.get("evidence") or r.get("summary"),
     }
-    for r in mcp_results]
+    for r in mcp_results
+]
 ```
 
-Then send only the necessary summary.
+Depois envie apenas o resumo necessário.
 
-**Pitfall 3 — Passing sensitive data unnecessarily**
+**Pitfall 3 — Passar dados sensíveis sem necessidade**
 
-Bad:
+Ruim:
 
 ```python
-f"Full CPF: {cpf}"
+f"CPF completo: {cpf}"
 ```
 
-Better:
+Melhor:
 
 ```python
-f"Customer identified: {'yes' if customer_key else 'no'}"
+f"Cliente identificado: {'sim' if customer_key else 'não'}"
 ```
 
-When you need to send an identifier, prefer a canonical key, hash, or masked value, according to the project policy.
+Quando precisar enviar identificador, prefira chave canônica, hash ou valor mascarado, conforme política do projeto.
 
-**Pitfall 4 — Letting the LLM make things up when the tool failed**
+**Pitfall 4 — Deixar o LLM inventar quando a tool falhou**
 
-Bad:
+Ruim:
 
 ```text
-Respond about the customer's payment.
+Responda sobre o pagamento do cliente.
 ```
 
-Better:
+Melhor:
 
 ```text
-The tool consultar_pagamentos_financeiro returned an error or no data.
-Do not confirm payment. Report that the evidence was not found.
+A tool consultar_pagamentos_financeiro retornou erro ou ausência de dados.
+Não confirme pagamento. Informe que a evidência não foi encontrada.
 ```
 
-**Pitfall 5 — Confusing instruction with evidence**
+**Pitfall 5 — Confundir instrução com evidência**
 
-Bad:
+Ruim:
 
 ```text
-The customer has paid and you must reply that everything is in order.
+O cliente pagou e você deve responder que está tudo certo.
 ```
 
-Better:
+Melhor:
 
 ```text
-MCP evidence:
-- consult_payments_financial: status=SETTLED
+Evidência MCP:
+- consultar_pagamentos_financeiro: status=COMPENSADO
 
-Instruction:
-- Explain the status objectively.
-   ```
+Instrução:
+- Explique o status de forma objetiva.
+```
 
-**Pitfall 6 — Putting a critical rule only in the `user`**
+**Pitfall 6 — Colocar regra crítica só no `user`**
 
-A permanent behavior rule must go in the `system`. The `user` must load the request and the context of that interaction.
+Regra de comportamento permanente deve ir no `system`. O `user` deve carregar o pedido e o contexto daquela interação.
 
-**Pitfall 7 — Duplicating history**
+**Pitfall 7 — Duplicar histórico**
 
-If the framework already included a memory summary, don't resend the entire conversation manually.
+Se o framework já incluiu resumo de memória, não reenvie toda a conversa manualmente.
 
-**Pitfall 8 — Not asking for a response format**
+**Pitfall 8 — Não pedir formato de resposta**
 
-In a corporate context, ask for a short, operational, traceable, and evidence-based response.
+Em contexto corporativo, peça resposta curta, operacional, rastreável e baseada em evidência.
 
-#### 5.2.3.8. Recommended `message` template for corporate agents
+#### 5.2.3.8. Modelo recomendado de `messages` para agentes corporativos
 
-Use this standard as a reference:
+Use este padrão como referência:
 
 ```python
 system_content = apply_agent_profile_prompt(
     state,
     """
-    You are a corporate agent specializing in the financial domain.
-    Use only evidence from business_context, MCP, and RAG.
-    Do not invent a protocol, customer, contract, status, payment, or operational action.
-    If mandatory data is missing, ask only for that data.
-    Respond in a short, operational, and auditable manner.
+    Você é um agente corporativo especializado no domínio financeiro.
+    Use somente evidências vindas de business_context, MCP e RAG.
+    Não invente protocolo, cliente, contrato, status, pagamento ou ação operacional.
+    Se faltar dado obrigatório, peça apenas esse dado.
+    Responda de forma curta, operacional e auditável.
     """.strip(),
 )
 
@@ -1694,99 +1710,99 @@ messages = [
     {
         "role": "user",
         "content": (
-            "User message:\n"
+            "Mensagem do usuário:\n"
             f"{user_text}\n\n"
-            "Summarized session context:\n"
+            "Contexto de sessão resumido:\n"
             f"channel={session.get('channel')} tenant_id={session.get('tenant_id')}\n"
             f"global_session_id={session.get('global_session_id')}\n\n"
-            "Business context:\n"
+            "Contexto de negócio:\n"
             f"customer_key={business_context.get('customer_key')}\n"
             f"contract_key={business_context.get('contract_key')}\n"
             f"interaction_key={business_context.get('interaction_key')}\n\n"
-            "Intent and route:\n"
+            "Intent e rota:\n"
             f"intent={state.get('intent')} route={state.get('route')}\n\n"
-            "MCP evidence:\n"
+            "Evidências MCP:\n"
             f"{mcp_evidence}\n\n"
-            "RAG context:\n"
-            f"{rag_context or '[no RAG context]'}\n\n"
-            "Expected format:\n"
-            "1. Direct response to the user.\n"
-            "2. Do not mention internal architecture details.\n"
-            "3. If evidence was missing, clearly state what was missing."
-            ),
+            "Contexto RAG:\n"
+            f"{rag_context or '[sem contexto RAG]'}\n\n"
+            "Formato esperado:\n"
+            "1. Resposta direta ao usuário.\n"
+            "2. Não cite detalhes internos de arquitetura.\n"
+            "3. Se faltou evidência, diga claramente o que faltou."
+        ),
     },
 ]
 ```
 
-This pattern helps the developer separate:
+Esse padrão ajuda o desenvolvedor a separar:
 
 ```text
-Permanent rules        → system
-Request and current context   → user
-Evidence from tools       → MCP block
-Documentary knowledge   → RAG block
-Session/channel              → summarized context
-Output format          → final instruction
+Regras permanentes        → system
+Pedido e contexto atual   → user
+Evidências de tools       → bloco MCP
+Conhecimento documental   → bloco RAG
+Sessão/canal              → contexto resumido
+Formato de saída          → instrução final
 ```
 
-#### 5.2.3.9. How to review `messages` during development
+#### 5.2.3.9. Como revisar `messages` durante desenvolvimento
 
-During development, before blaming the LLM, review the payload sent to it.
+Durante o desenvolvimento, antes de culpar o LLM, revise o payload enviado para ele.
 
-Useful questions:
+Perguntas úteis:
 
 ```text
-Does the system prompt contain the most important rules?
-Does the user prompt contain the user's actual question?
-Has the correct business_context been included?
-Do the MCP results appear as evidence, not as a made-up instruction?
-Did the RAG provide useful context or just noise?
-Is there unnecessary sensitive data?
-Is the prompt too long?
-Is the expected response format clear?
+O system prompt contém as regras mais importantes?
+O user prompt contém a pergunta real do usuário?
+O business_context certo foi incluído?
+Os resultados MCP aparecem como evidência, e não como instrução inventada?
+O RAG trouxe contexto útil ou só ruído?
+Há dados sensíveis desnecessários?
+O prompt está grande demais?
+O formato de resposta esperado está claro?
 ```
 
-A good practice is to issue a debug IC in a non-production environment or log a sanitized version of the prompt, never the raw prompt with sensitive data.
+Uma boa prática é emitir um IC de debug em ambiente não produtivo ou logar uma versão sanitizada do prompt, nunca o prompt bruto com dados sensíveis.
 
 
-### 5.2.4. Advanced features now standardized by the framework
+### 5.2.4. Recursos avançados agora padronizados pelo framework
 
-In the first examples of this tutorial, the agent directly uses simple methods such as`_collect_mcp_context()` and`_invoke_llm_cached()`. This is sufficient for simple agents. However, in real agents migrated to the framework, additional needs arise:
+Nos primeiros exemplos deste tutorial, o agente usa diretamente métodos simples como `_collect_mcp_context()` e `_invoke_llm_cached()`. Isso é suficiente para agentes simples. Porém, em agentes reais migrados para o framework, aparecem necessidades adicionais:
 
 ```text
-normalize tools by intent;
-always read context/session/business_context/tool_arguments in the same way;
-assemble MCP arguments with aliases;
-block action tools when the required payload is missing;
-run tools one by one with observability events;
-assemble messages without dumping the entire state in the prompt;
-generate a controlled fallback when the LLM fails.
+normalizar tools por intent;
+ler context/session/business_context/tool_arguments sempre da mesma forma;
+montar argumentos MCP com aliases;
+bloquear tools de ação quando falta payload obrigatório;
+executar tools uma a uma com eventos de observabilidade;
+montar messages sem despejar o state inteiro no prompt;
+gerar fallback controlado quando o LLM falha.
 ```
 
-Starting with this version, they are treated as **reusable capabilities of the framework**, and not as code that each agent must copy.
+A partir desta versão, elas passam a ser tratadas como **capacidades reutilizáveis do framework**, e não como código que cada agente deve copiar.
 
-#### 5.2.4.1. `RuntimeContext`: canonical reading of the state
+#### 5.2.4.1. `RuntimeContext`: leitura canônica do state
 
-The framework now offers a conceptual object called `RuntimeContext`, obtained by the agent with:
+O framework passa a oferecer um objeto conceitual chamado `RuntimeContext`, obtido pelo agente com:
 
 ```python
 runtime = self.get_runtime_context(state)
 ```
 
-This object organizes:
+Esse objeto organiza:
 
 ```text
-runtime.state              → complete LangGraph state
-runtime.context            → normalized context
-runtime.session            → session/channel data coming from the Gateway
-runtime.session_metadata   → session metadata
-runtime.business_context   → canonical business identity
-runtime.tool_arguments     → explicit parameters for tools
-runtime.sanitized_input    → text sanitized by guardrails
-runtime.original_text      → original text, when necessary for controlled extraction
+runtime.state              → state completo do LangGraph
+runtime.context            → context normalizado
+runtime.session            → dados de sessão/canal vindos do Gateway
+runtime.session_metadata   → metadata da sessão
+runtime.business_context   → identidade de negócio canônica
+runtime.tool_arguments     → parâmetros explícitos para tools
+runtime.sanitized_input    → texto sanitizado pelos guardrails
+runtime.original_text      → texto original, quando necessário para extração controlada
 ```
 
-The developer doesn't have to keep repeating:
+O desenvolvedor não precisa ficar repetindo:
 
 ```python
 ctx = state.get("context") or {}
@@ -1794,14 +1810,14 @@ session = ctx.get("session") or {}
 business_context = ctx.get("business_context") or state.get("business_context") or {}
 ```
 
-They can use:
+Ele pode usar:
 
 ```python
 runtime = self.get_runtime_context(state)
 customer_key = runtime.pick("customer_key", "cpf", "cnpj", "msisdn")
 ```
 
-The order of trust remains standardized:
+A ordem de confiança continua padronizada:
 
 ```text
 1. tool_arguments
@@ -1810,38 +1826,38 @@ The order of trust remains standardized:
 4. session
 5. session.metadata
 6. state
-   ```
+```
 
-#### 5.2.4.2. `normalize_tools_by_intent()`: tools fallback without taking power from the router
+#### 5.2.4.2. `normalize_tools_by_intent()`: fallback de tools sem tirar poder do router
 
-In an ideal agent, the `EnterpriseRouter` chooses the intent and injects `mcp_tools` into the `state`. But in tests, direct calls or migrations, the agent can run without this injection.
+Em um agente ideal, o `EnterpriseRouter` escolhe a intent e injeta `mcp_tools` no `state`. Mas, em testes, chamadas diretas ou migrações, o agente pode ser executado sem essa injeção.
 
-For this, the framework offers:
+Para isso, o framework oferece:
 
 ```python
 normalized_state = self.normalize_tools_by_intent(
-state,
-default_tools_by_intent=DEFAULT_TOOLS_BY_INTENT,
-default_intent="financial_payments",
-route=self.name,
+    state,
+    default_tools_by_intent=DEFAULT_TOOLS_BY_INTENT,
+    default_intent="financeiro_pagamentos",
+    route=self.name,
 )
 ```
 
-The rule is:
+A regra é:
 
 ```text
-If state[ 'mcp_tools'] came from the router, use these tools.
-If it didn't, use the fallback declared by the agent.
-Remove duplicates.
-Preserve stable order.
-Define intent, route, and active_agent when they are missing.
+Se state['mcp_tools'] veio do router, use essas tools.
+Se não veio, use o fallback declarado pelo agente.
+Remova duplicidades.
+Preserve ordem estável.
+Defina intent, route e active_agent quando estiverem ausentes.
 ```
 
-This prevents each agent from implementing its own`_normalize_state_tools()`.
+Isso evita que cada agente implemente seu próprio `_normalize_state_tools()`.
 
-#### 5.2.4.3. `build_tool_arguments()`: canonical MCP arguments
+#### 5.2.4.3. `build_tool_arguments()`: argumentos MCP canônicos
 
-The agent can assemble MCP arguments without knowing all the details of the mapper:
+O agente pode montar argumentos MCP sem conhecer todos os detalhes do mapper:
 
 ```python
 args = self.build_tool_arguments(
@@ -1855,7 +1871,7 @@ args = self.build_tool_arguments(
 )
 ```
 
-This method assembles arguments such as:
+Esse método monta argumentos como:
 
 ```text
 query
@@ -1864,28 +1880,27 @@ customer_key
 contract_key
 interaction_key
 session_key
-explicit tool_arguments parameters
-aliases configured by the domain
+parâmetros explícitos de tool_arguments
+aliases configurados pelo domínio
 ```
 
-After that, the `MCPToolRouter` still applies the `mcp_parameter_mapping.yaml`. That is:
+Depois disso, o `MCPToolRouter` ainda aplica o `mcp_parameter_mapping.yaml`. Ou seja:
 
 ```text
-build_tool_arguments() assembles the canonical contract.
-mcp_parameter_mapping.yaml translates to the name expected by each MCP Server.
+build_tool_arguments() monta o contrato canônico.
+mcp_parameter_mapping.yaml traduz para o nome esperado por cada MCP Server.
 ```
 
-#### 5.2.4.4. Policy for running sensitive tools
+#### 5.2.4.4. Política de execução de tools sensíveis
 
-Not every tool is just for consultation. Some tools perform actions, such as registering an opinion, opening a request, canceling a service, or creating a protocol.
+Nem toda tool é apenas consulta. Algumas tools executam ações, como registrar parecer, abrir solicitação, cancelar serviço ou criar protocolo.
 
-These tools must be declared with a policy in `config/tools.yaml`:
+Essas tools devem ser declaradas com política em `config/tools.yaml`:
 
 ```yaml
 tools:
-tools:
   registrar_acao_backoffice:
-    description: Registers operational action in the backoffice.
+    description: Registra ação operacional no backoffice.
     mcp_server: backoffice
     enabled: true
     tool_type: action
@@ -1897,53 +1912,53 @@ tools:
       operator_session: string
 ```
 
-With this, the framework is able to block the call before it reaches the MCP when a required field is missing:
+Com isso, o framework consegue bloquear a chamada antes de chegar ao MCP quando falta campo obrigatório:
 
 ```text
-Tool registrar_acao_backoffice chosen.
-Framework assembles arguments.
-Framework checks requires.
-If action_text is missing, it returns skipped=true.
-Agent issues domain IC/NOC, if necessary.
+Tool registrar_acao_backoffice escolhida.
+Framework monta argumentos.
+Framework verifica requires.
+Se action_text estiver ausente, retorna skipped=true.
+Agente emite IC/NOC de domínio, se necessário.
 ```
 
-This prevents each agent from manually writing:
+Isso evita que cada agente escreva manualmente:
 
 ```python
 if tool.startswith("registrar_") and not arguments.get("action_text"):
-...
+    ...
 ```
 
-#### 5.2.4.5. `execute_tools_for_intent()`: standardized execution of tools
+#### 5.2.4.5. `execute_tools_for_intent()`: execução padronizada das tools
 
-The agent can run tools selected by the intent with:
+O agente pode executar tools selecionadas pela intent com:
 
 ```python
 mcp_results = await self.execute_tools_for_intent(
     state,
-    tools=state.get("mcp_tools") or[],
+    tools=state.get("mcp_tools") or [],
     aliases=TOOL_ALIASES,
 )
 ```
 
-This method takes care of:
+Esse método cuida de:
 
 ```text
-assemble arguments;
-apply execution policy;
-call _call_mcp_tool();
-normalize result;
-issue IC.MCP_TOOL_CALLED;
-issue IC.TOOL_CALLED;
-issue NOC.MCP_TOOL_FAILED when there is a failure;
-return skipped=true when a policy blocks execution.
+montar argumentos;
+aplicar política de execução;
+chamar _call_mcp_tool();
+normalizar resultado;
+emitir IC.MCP_TOOL_CALLED;
+emitir IC.TOOL_CALLED;
+emitir NOC.MCP_TOOL_FAILED quando houver falha;
+retornar skipped=true quando uma política bloquear a execução.
 ```
 
-The agent can still issue business-specific ICs after that. Example: `AGA.010` for Speech Analytics, `AGA.011` for Customer/IMDB, `AGA.020` for TAIS/templates.
+O agente ainda pode emitir ICs específicos de negócio depois disso. Exemplo: `AGA.010` para Speech Analytics, `AGA.011` para Cliente/IMDB, `AGA.020` para TAIS/templates.
 
-#### 5.2.4.6. `build_messages()`: standardized messages
+#### 5.2.4.6. `build_messages()`: messages padronizado
 
-To prevent each agent from assembling prompts differently, the framework offers:
+Para evitar que cada agente monte prompts de forma diferente, o framework oferece:
 
 ```python
 messages = self.build_messages(
@@ -1955,68 +1970,68 @@ messages = self.build_messages(
 )
 ```
 
-This builder separates:
+Esse builder separa:
 
 ```text
 system prompt;
-user message;
-intent and route;
+mensagem do usuário;
+intent e route;
 business_context;
-MCP results;
-RAG context;
-RAG metadata;
-extra sections.
+resultados MCP;
+contexto RAG;
+metadados RAG;
+seções extras.
 ```
 
-The goal is to reduce these errors:
+O objetivo é reduzir estes erros:
 
 ```text
-sending the entire state to the LLM;
-mixing a permanent rule with evidence;
-including sensitive data unnecessarily;
-forgetting to report that a tool has failed;
-duplicating history that the framework already carries.
+enviar state inteiro para o LLM;
+misturar regra permanente com evidência;
+incluir dados sensíveis sem necessidade;
+esquecer de informar que uma tool falhou;
+duplicar histórico que o framework já carrega.
 ```
 
-#### 5.2.4.7. When to customize and when to use the framework
+#### 5.2.4.7. Quando customizar e quando usar o framework
 
-Use the framework to:
+Use o framework para:
 
 ```text
-read context;
-standardize tools;
-assemble MCP arguments;
-apply execution policy;
-call MCP;
-assemble messages;
-call LLM with cache;
-issue generic technical events.
+ler contexto;
+normalizar tools;
+montar argumentos MCP;
+aplicar política de execução;
+chamar MCP;
+montar messages;
+chamar LLM com cache;
+emitir eventos técnicos genéricos.
 ```
 
-Use the agent to:
+Use o agente para:
 
 ```text
-define business rules;
-define domain-specific aliases;
-define domain prompts;
-define journey-specific ICs;
-define conversational states such as WAITING_*;
-handle migration compatibility;
-decide on domain-specific textual fallback.
+definir regras de negócio;
+definir aliases específicos do domínio;
+definir prompts do domínio;
+definir ICs específicos da jornada;
+definir estados conversacionais como WAITING_*;
+tratar compatibilidade de migração;
+decidir fallback textual específico do domínio.
 ```
 
-This separation allows a real agent to have strong customizations without becoming an engine parallel to the framework.
+Essa separação permite que um agente real tenha customizações fortes sem virar um motor paralelo ao framework.
 
 
-### 5.3. Create the agent file
+### 5.3. Criar o arquivo do agente
 
-Create:
+Crie:
 
 ```text
 app/agents/financeiro_agent.py
 ```
 
-Annotated base code:
+Código-base comentado:
 
 ```python
 from app.agents.prompting import apply_agent_profile_prompt
@@ -2086,7 +2101,7 @@ class FinanceiroAgent(AgentRuntimeMixin):
             state,
             system_prompt=apply_agent_profile_prompt(
                 state,
-                "You are a financial agent. Respond clearly, using data from the tools when available. Do not confirm financial actions without evidence and explicit confirmation."
+                "Você é um agente financeiro. Responda com clareza, usando dados das ferramentas quando disponíveis. Não confirme ações financeiras sem evidência e confirmação explícita."
             ),
             mcp_results=tool_context,
             rag_context=rag_context,
@@ -2119,22 +2134,22 @@ class FinanceiroAgent(AgentRuntimeMixin):
         return await self._collect_mcp_context(state)
 ```
 
-### 5.3.1. How to adapt this example to a real agent
+### 5.3.1. Como adaptar esse exemplo para um agente real
 
-In the example above, `session`, `business_context`, and `tool_arguments` appear in the prompt for educational purposes. In production, the developer should avoid throwing huge objects directly into the prompt. Ideally, only the necessary fields should be selected.
+No exemplo acima, `session`, `business_context` e `tool_arguments` aparecem no prompt para fins didáticos. Em produção, o desenvolvedor deve evitar jogar objetos enormes diretamente no prompt. O ideal é selecionar apenas os campos necessários.
 
-Example of reasoning for a financial agent:
+Exemplo de raciocínio para um agente financeiro:
 
 ```text
-session.channel       → useful for adjusting language or understanding the origin of the conversation.
-session.tenant_id     → useful for multi-tenant isolation.
-business_context.customer_key → useful for consulting customer/bill/payment.
-business_context.contract_key → useful for consulting contract, invoice or order.
-business_context.interaction_key → useful for tracking protocol/call/interaction.
-tool_arguments        → useful when the Gateway or Identity Resolver has already prepared exact parameters.
+session.channel       → útil para ajustar linguagem ou entender origem da conversa.
+session.tenant_id     → útil para isolamento multi-tenant.
+business_context.customer_key → útil para consultar cliente/título/pagamento.
+business_context.contract_key → útil para consultar contrato, fatura ou pedido.
+business_context.interaction_key → útil para rastrear protocolo/chamado/interação.
+tool_arguments        → útil quando o Gateway ou Identity Resolver já preparou parâmetros exatos.
 ```
 
-A common utility function within the agent is a `pick()` with an explicit order of precedence:
+Uma função utilitária comum dentro do agente é um `pick()` com ordem de precedência explícita:
 
 ```python
 def pick(name: str, *, tool_arguments, business_context, ctx, session, session_metadata, state):
@@ -2151,124 +2166,124 @@ def pick(name: str, *, tool_arguments, business_context, ctx, session, session_m
     return state.get(name)
 ```
 
-This function makes it clear that the agent is not “guessing” where the data comes from. It is following a trust policy.
+Essa função deixa claro que o agente não está “adivinhando” de onde vem o dado. Ele está seguindo uma política de confiança.
 
-### 5.3.2. Where does the Agent Gateway come in in this code?
+### 5.3.2. Onde entra o Agent Gateway nesse código?
 
-When there is an Agent Gateway / Global Supervisor, it can enrich the message before sending it to the agent's backend. Examples of data that can arrive in `context.session`:
+Quando existe Agent Gateway / Global Supervisor, ele pode enriquecer a mensagem antes de enviá-la ao backend do agente. Exemplos de dados que podem chegar em `context.session`:
 
 ```json
 {
-    "session": {
-        "global_session_id": "s1",
-        "backend_session_id": "default:financeiro_agent:s1",
-        "active_backend": "financeiro",
-        "channel": "web",
-        "tenant_id": "default",
-        "metadata": {
-            "selected_backend": "financeiro",
-            "last_reason": "Backend chosen by rules: matches=[ 'pagamento']"
-        }
+  "session": {
+    "global_session_id": "s1",
+    "backend_session_id": "default:financeiro_agent:s1",
+    "active_backend": "financeiro",
+    "channel": "web",
+    "tenant_id": "default",
+    "metadata": {
+      "selected_backend": "financeiro",
+      "last_reason": "Backend escolhido por regras: matches=['pagamento']"
     }
+  }
 }
 ```
 
-The agent should not use this block to make a final business decision. It should use it for technical context, traceability, and conversation continuity. The business decision must continue to be based on `business_context`, MCP tools, RAG, and domain rules.
+O agente não deve usar esse bloco para tomar decisão de negócio final. Ele deve usá-lo para contexto técnico, rastreabilidade e continuidade da conversa. A decisão de negócio deve continuar baseada em `business_context`, tools MCP, RAG e regras de domínio.
 
-### 5.4. How do you know if the agent is well implemented?
+### 5.4. Como saber se o agente está bem implementado?
 
-An agent is well implemented when:
+Um agente está bem implementado quando:
 
 ```text
-It knows business rules, but it doesn't know infrastructure details.
-It uses the common runtime for LLM, RAG, cache, MCP, and IC.
-It returns a simple contract to the workflow.
-It does not duplicate guardrail, checkpoint, session, memory, or telemetry.
-It can be tested in isolation with simulated state.
+Ele conhece regras de negócio, mas não conhece detalhes de infraestrutura.
+Ele usa o runtime comum para LLM, RAG, cache, MCP e IC.
+Ele retorna um contrato simples para o workflow.
+Ele não duplica guardrail, checkpoint, sessão, memória ou telemetria.
+Ele consegue ser testado isoladamente com state simulado.
 ```
 
 ---
 
-## 6. Registering the agent in the workflow
+## 6. Registrando o agente no workflow
 
-### 6.1. Purpose of this chapter
+### 6.1. Objetivo deste capítulo
 
-So far, the tutorial has created the `FinanceiroAgent` domain class in:
+Até aqui, o tutorial criou a classe de domínio `FinanceiroAgent` em:
 
 ```text
 app/agents/financeiro_agent.py
 ```
 
-But creating the class is not enough. LangGraph only executes what has been registered as a graph node.
+Mas criar a classe não é suficiente. O LangGraph só executa aquilo que foi registrado como nó do grafo.
 
-This chapter shows, in an implementable way, how to connect the `finance_agent` to the actual workflow of the template.
+Este capítulo mostra, de forma implementável, como conectar o `financeiro_agent` ao workflow real do template.
 
-From here on, consider that the code snippets are to be applied in the project, not just conceptual examples.
+A partir daqui, considere que os trechos de código são para serem aplicados no projeto, não apenas exemplos conceituais.
 
-The ultimate goal is to make the flow below exist in the graph:
+O objetivo final é fazer o fluxo abaixo existir no grafo:
 
 ```text
 START
-↓
+  ↓
 input_guardrails
-↓
+  ↓
 routing_decision
-↓
-financial_agent
-↓
+  ↓
+financeiro_agent
+  ↓
 output_supervisor
-↓
+  ↓
 output_guardrails
-↓
+  ↓
 judge
-↓
+  ↓
 supervisor_review
-↓
+  ↓
 persist
-↓
+  ↓
 END
 ```
 
 ---
 
-### 6.2. What needs to be changed in the workflow
+### 6.2. O que precisa ser alterado no workflow
 
-Edit the file:
+Edite o arquivo:
 
 ```text
 app/workflows/agent_graph.py
 ```
 
-To register a new agent in the workflow, you need to make six changes:
+Para registrar um novo agente no workflow, você precisa realizar seis alterações:
 
 ```text
-1. Import the FinanceiroAgent class.
-2. Instantiate self.financeiro in __init__.
-3. Create the wrapper method financeiro_agent(self, state).
-4. Register the finance_agent node in the StateGraph.
-5. Add the conditional route routing_decision → financeiro_agent.
-6. Connect financeiro_agent → output_supervisor.
-   ```
+1. Importar a classe FinanceiroAgent.
+2. Instanciar self.financeiro no __init__.
+3. Criar o método wrapper financeiro_agent(self, state).
+4. Registrar o nó financeiro_agent no StateGraph.
+5. Adicionar a rota condicional routing_decision → financeiro_agent.
+6. Conectar financeiro_agent → output_supervisor.
+```
 
-If any of these steps are missing, the agent may exist in the code, but it will never be executed by LangGraph.
+Se qualquer uma dessas etapas faltar, o agente pode existir no código, mas nunca será executado pelo LangGraph.
 
 ---
 
-### 6.3. Import the agent
+### 6.3. Importar o agente
 
-At the beginning of `app/workflows/agent_graph.py`, add:
+No início de `app/workflows/agent_graph.py`, adicione:
 
 ```python
 from app.agents.financeiro_agent import FinanceiroAgent
 ```
 
-This import makes the class available to the workflow.
+Esse import torna a classe disponível para o workflow.
 
 ---
 
-### 6.4. Instantiate the agent in `__init__`
+### 6.4. Instanciar o agente no `__init__`
 
-Within the `AgentWorkflow` class, locate the point where the existing agents are instantiated, for example:
+Dentro da classe `AgentWorkflow`, localize o ponto onde os agentes existentes são instanciados, por exemplo:
 
 ```python
 self.billing = BillingAgent(llm, **agent_kwargs)
@@ -2277,13 +2292,13 @@ self.orders = OrdersAgent(llm, **agent_kwargs)
 self.support = SupportAgent(llm, **agent_kwargs)
 ```
 
-Add:
+Adicione:
 
 ```python
 self.financeiro = FinanceiroAgent(llm, **agent_kwargs)
 ```
 
-The `agent_kwargs` must be the same as that used by the other agents. It typically loads shared framework capabilities, such as:
+O `agent_kwargs` deve ser o mesmo usado pelos outros agentes. Ele normalmente carrega capacidades compartilhadas do framework, como:
 
 ```text
 telemetry
@@ -2296,85 +2311,85 @@ memory
 summary_memory
 ```
 
-The finance agent should not create these objects on its own. It must receive them from the workflow.
+O agente financeiro não deve criar esses objetos sozinho. Ele deve recebê-los do workflow.
 
 ---
 
-### 6.5. Create the real wrapper method of the `finance_agent`
+### 6.5. Criar o método wrapper real do `financeiro_agent`
 
-#### 6.5.1. What is the wrapper in this framework?
+#### 6.5.1. O que é o wrapper neste framework
 
-In LangGraph, a node needs to be a function, method, or callable that receives the current `state`.
+No LangGraph, um nó precisa ser uma função, método ou callable que receba o `state` atual.
 
-In a simplified way:
+De forma simplificada:
 
 ```python
 def node(state):
     return {}
 ```
 
-In the framework, however, the real agent is a class with the `run()` method:
+No framework, porém, o agente real é uma classe com método `run()`:
 
 ```python
 await self.financeiro.run(state)
 ```
 
-Therefore, the workflow needs an intermediate method. This method is the wrapper.
+Por isso, o workflow precisa de um método intermediário. Esse método é o wrapper.
 
-The implementation is a method within the `AgentWorkflow` class (/app/workflows/agent_graph.py).
+A implementação é um método dentro da classe `AgentWorkflow` (/app/workflows/agent_graph.py).
 
-#### 6.5.2. Wrapper code
+#### 6.5.2. Código do wrapper
 
-Import the FinanceiroAgent in /app/workflows/agent_graph.py:
+Importe a FinanceiroAgent em /app/workflows/agent_graph.py:
 
 ```python
 from app.agents.financeiro_agent import FinanceirotAgent
 ```
 
-Add the method below within the `AgentWorkflow` class:
+Adicione o método abaixo dentro da classe `AgentWorkflow`:
 
 ```python
 async def financeiro_agent(self, state):
     async with self.langgraph_telemetry.node("financeiro_agent", state):
-    async with self.telemetry.span(
-        "workflow.agent.financeiro",
-        session_id=state.get("conversation_key") or state.get("session_id"),
-        input={"intent": state.get("intent")},
-    ):
-    return await self.financeiro.run(state)
+        async with self.telemetry.span(
+            "workflow.agent.financeiro",
+            session_id=state.get("conversation_key") or state.get("session_id"),
+            input={"intent": state.get("intent")},
+        ):
+            return await self.financeiro.run(state)
 ```
 
-This method bridges the gap between:
+Esse método faz a ponte entre:
 
 ```text
 LangGraph node
-↓
+  ↓
 AgentWorkflow.financeiro_agent(state)
-↓
+  ↓
 FinanceiroAgent.run(state)
 ```
 
-The business logic continues within:
+A lógica de negócio continua dentro de:
 
 ```python
 FinanceiroAgent.run(state)
 ```
 
-The wrapper only:
+O wrapper apenas:
 
 ```text
-receives the state;
-opens node telemetry;
-opens agent span;
-calls the real agent;
-returns the result to the workflow.
+recebe o state;
+abre telemetria do nó;
+abre span do agente;
+chama o agente real;
+retorna o resultado para o workflow.
 ```
 
 ---
 
-### 6.6. Register the node in `StateGraph`
+### 6.6. Registrar o nó no `StateGraph`
 
-Within the`_build_graph()` method, locate the existing nodes:
+Dentro do método `_build_graph()`, localize os nós já existentes:
 
 ```python
 builder.add_node("billing_agent", self._node("billing_agent", self.billing_agent))
@@ -2383,23 +2398,23 @@ builder.add_node("orders_agent", self._node("orders_agent", self.orders_agent))
 builder.add_node("support_agent", self._node("support_agent", self.support_agent))
 ```
 
-Add:
+Adicione:
 
 ```python
 builder.add_node("financeiro_agent", self._node("financeiro_agent", self.financeiro_agent))
 ```
 
-The first `financeiro_agent` is the name of the node within the graph.
+O primeiro `financeiro_agent` é o nome do nó dentro do grafo.
 
-The second `self.financeiro_agent` is the wrapper method created in the previous step.
+O segundo `self.financeiro_agent` é o método wrapper criado na etapa anterior.
 
 ---
 
-### 6.7. Add the conditional route for the new agent
+### 6.7. Adicionar a rota condicional para o novo agente
 
-The `routing_decision node` decides which agent will be called.
+O nó `routing_decision` decide qual agente será chamado.
 
-In the`_build_graph()` method, locate:
+No método `_build_graph()`, localize:
 
 ```python
 builder.add_conditional_edges(
@@ -2416,13 +2431,13 @@ builder.add_conditional_edges(
 )
 ```
 
-Add the finance route:
+Adicione a rota do financeiro:
 
 ```python
-"finance_agent": "finance_agent",
+"financeiro_agent": "financeiro_agent",
 ```
 
-The complete block looks like this:
+O bloco completo fica assim:
 
 ```python
 builder.add_conditional_edges(
@@ -2440,37 +2455,37 @@ builder.add_conditional_edges(
 )
 ```
 
-This step is mandatory.
+Essa etapa é obrigatória.
 
-Without it, even if the `routing.yaml` returns:
+Sem ela, mesmo que o `routing.yaml` retorne:
 
 ```text
 route = financeiro_agent
 ```
 
-LangGraph won't know which node to go to.
+o LangGraph não saberá para qual nó ir.
 
 ---
 
-### 6.8. Connect `finance_agent` to `output_supervisor`
+### 6.8. Conectar o `financeiro_agent` ao `output_supervisor`
 
-After the financial agent responds, the flow should not go directly to the user.
+Depois que o agente financeiro responder, o fluxo não deve ir direto ao usuário.
 
-It must go through the same pipeline as the other agents:
+Ele deve passar pelo mesmo pipeline dos demais agentes:
 
 ```text
 output_supervisor
-↓
+  ↓
 output_guardrails
-↓
+  ↓
 judge
-↓
+  ↓
 supervisor_review
-↓
+  ↓
 persist
 ```
 
-Locate the edges of the existing agents:
+Localize os edges dos agentes existentes:
 
 ```python
 builder.add_edge("billing_agent", "output_supervisor")
@@ -2479,25 +2494,25 @@ builder.add_edge("orders_agent", "output_supervisor")
 builder.add_edge("support_agent", "output_supervisor")
 ```
 
-Add:
+Adicione:
 
 ```python
 builder.add_edge("financeiro_agent", "output_supervisor")
 ```
 
-Without this line, the `finance_agent` node may run, but the graph may not know how to continue after it.
+Sem essa linha, o nó `financeiro_agent` pode até executar, mas o grafo pode não saber como continuar depois dele.
 
 ---
 
-### 6.9. Complete example of`_build_graph()` with `financeiro_agent`
+### 6.9. Exemplo completo do `_build_graph()` com `financeiro_agent`
 
-Below is the complete example of the`_build_graph()` method with the new agent included.
+Abaixo está o exemplo completo do método `_build_graph()` com o novo agente incluído.
 
-Use this block as a reference to compare with your actual file:
+Use este bloco como referência para comparar com o seu arquivo real:
 
 ```python
 def _build_graph(self):
-builder = StateGraph(AgentState)
+    builder = StateGraph(AgentState)
 
     builder.add_node("input_guardrails", self._node("input_guardrails", self.input_guardrails))
     builder.add_node("routing_decision", self._node("routing_decision", self.routing_decision))
@@ -2506,7 +2521,7 @@ builder = StateGraph(AgentState)
     builder.add_node("product_agent", self._node("product_agent", self.product_agent))
     builder.add_node("orders_agent", self._node("orders_agent", self.orders_agent))
     builder.add_node("support_agent", self._node("support_agent", self.support_agent))
-    builder.add_node("finance_agent", self._node("finance_agent", self.finance_agent))
+    builder.add_node("financeiro_agent", self._node("financeiro_agent", self.financeiro_agent))
 
     builder.add_node("handoff", self._node("handoff", self.handoff))
     builder.add_node("supervisor_agent", self._node("supervisor_agent", self.supervisor_agent))
@@ -2526,6 +2541,7 @@ builder = StateGraph(AgentState)
             "continue": "routing_decision",
         },
     )
+
     builder.add_conditional_edges(
         "routing_decision",
         lambda s: s.get("route", "billing_agent"),
@@ -2534,7 +2550,7 @@ builder = StateGraph(AgentState)
             "product_agent": "product_agent",
             "orders_agent": "orders_agent",
             "support_agent": "support_agent",
-            "finance_agent": "finance_agent",
+            "financeiro_agent": "financeiro_agent",
             "handoff": "handoff",
             "supervisor_agent": "supervisor_agent",
         },
@@ -2544,7 +2560,7 @@ builder = StateGraph(AgentState)
     builder.add_edge("product_agent", "output_supervisor")
     builder.add_edge("orders_agent", "output_supervisor")
     builder.add_edge("support_agent", "output_supervisor")
-    builder.add_edge("financial_agent", "output_supervisor")
+    builder.add_edge("financeiro_agent", "output_supervisor")
     builder.add_edge("handoff", "output_supervisor")
     builder.add_edge("supervisor_agent", "output_supervisor")
 
@@ -2561,7 +2577,7 @@ builder = StateGraph(AgentState)
 
 ---
 
-### 6.10. Complete graph with `financeiro_agent`
+### 6.10. Grafo completo com `financeiro_agent`
 
 ```mermaid
 flowchart TD
@@ -2596,68 +2612,68 @@ flowchart TD
 
 ---
 
-### 6.11. How `routing.yaml` connects to the graph
+### 6.11. Como o `routing.yaml` se conecta ao grafo
 
-The workflow can only execute a route if it exists in the `add_conditional_edges()` map.
+O workflow só sabe executar uma rota se ela existir no mapa de `add_conditional_edges()`.
 
-The `routing.yaml` needs to return exactly the same name:
+O `routing.yaml` precisa devolver exatamente o mesmo nome:
 
 ```yaml
 intents:
-- name: financeiro_pagamentos
-   domain: financeiro
-   agent: financeiro_agent
-   description: Questions about payment, payment slip, balance, agreement, collection, due date and duplicate.
-   priority: 15
-   mcp_tools:
-   - consult_bill_finance
-   - consult_payments_financial
-      keywords:
-   - payment
-   - payment slip
-   - balance
-   - agreement
-   - financial
-   - duplicate
-   - due date
-   - collection
-   - dispute      
+  - name: financeiro_pagamentos
+    domain: financeiro
+    agent: financeiro_agent
+    description: Dúvidas sobre pagamento, boleto, saldo, acordo, cobrança, vencimento e segunda via.
+    priority: 15
+    mcp_tools:
+      - consultar_titulo_financeiro
+      - consultar_pagamentos_financeiro
+    keywords:
+      - pagamento
+      - boleto
+      - saldo
+      - acordo
+      - financeiro
+      - segunda via
+      - vencimento
+      - cobrança
+      - contestação
 ```
 
-The relationship needs to look like this:
+A relação precisa ficar assim:
 
 ```text
 routing.yaml
-agent: financeiro_agent
-↓
-state[ "route"] = financeiro_agent
-↓
-add_conditional_edges has "financeiro_agent"
-↓
-LangGraph executes the financeiro_agent node
-↓
+  agent: financeiro_agent
+      ↓
+state["route"] = financeiro_agent
+      ↓
+add_conditional_edges possui "financeiro_agent"
+      ↓
+LangGraph executa o nó financeiro_agent
+      ↓
 AgentWorkflow.financeiro_agent(state)
-↓
+      ↓
 FinanceiroAgent.run(state)
 ```
 
-If the YAML uses `financeiro`, but the graph uses `financeiro_agent`, the routing will not find the correct node.
+Se o YAML usar `financeiro`, mas o grafo usar `financeiro_agent`, o roteamento não vai encontrar o nó correto.
 
-Always use the same name.
+Use sempre o mesmo nome.
 
 ---
 
-### 6.12. Add the agent to supervisor mode
+### 6.12. Adicionar o agente ao modo supervisor
 
-If the project is using:
+Se o projeto estiver usando:
 
 ```env
 ROUTING_MODE=supervisor
 ```
 
-or if there is a supervised handoff, the supervisor also needs to know how to call the new agent.
+ou se houver handoff supervisionado, o supervisor também precisa saber chamar o novo agente.
 
-In the `supervisor_agent()` method, locate the handlers map:
+No método `supervisor_agent()`, localize o mapa de handlers:
 
 ```python
 handlers = {
@@ -2668,13 +2684,13 @@ handlers = {
 }
 ```
 
-Add:
+Adicione:
 
 ```python
 "financeiro_agent": self.financeiro.run,
 ```
 
-The final block looks like this:
+O bloco final fica assim:
 
 ```python
 handlers = {
@@ -2686,44 +2702,44 @@ handlers = {
 }
 ```
 
-Note: In supervisor mode, the handler normally calls the agent's `run()` directly. In router/LangGraph mode, the execution passes through the wrapper registered as a node.
+Atenção: no modo supervisor, o handler normalmente chama diretamente o `run()` do agente. No modo router/LangGraph, a execução passa pelo wrapper registrado como nó.
 
 ---
 
-### 6.13. Correct order of implementation
+### 6.13. Ordem correta de implementação
 
-To avoid confusion, implement in this order:
-
-```text
-1. Create app/agents/financeiro_agent.py.
-2. Import FinanceiroAgent into app/workflows/agent_graph.py.
-3. Instantiate self.financeiro in __init__.
-4. Create the wrapper async financeiro_agent(self, state).
-5. Add builder.add_node("financeiro_agent", ...).
-6. Add "financeiro_agent": "financeiro_agent" in add_conditional_edges.
-7. Add builder.add_edge("financeiro_agent", "output_supervisor").
-8. Add financeiro_agent to the supervisor handlers if supervisor mode is used.
-9. Register financeiro_agent in config/agents.yaml.
-10. Create config/agents/financeiro_agent/*.yaml.
-11. Configure the intent in config/routing.yaml.
-12. Configure tools, MCP server, and mcp_parameter_mapping.yaml.
-13. Test via /gateway/message.
-14. Validate routing, node, edge, MCP, RAG, output guardrails, judge, and persistence logs.
-   ```
-
-This order prevents the developer from creating a YAML configuration before there is a real node in the graph, or creating the agent class without LangGraph being able to reach it.
-
----
-
-### 6.14. How to test if the node has entered the graph
-
-After starting the backend, send a message that matches the financial intent, for example:
+Para evitar confusão, implemente nesta ordem:
 
 ```text
-I want to check the payment of my bank slip.
+1. Criar app/agents/financeiro_agent.py.
+2. Importar FinanceiroAgent em app/workflows/agent_graph.py.
+3. Instanciar self.financeiro no __init__.
+4. Criar o wrapper async financeiro_agent(self, state).
+5. Adicionar builder.add_node("financeiro_agent", ...).
+6. Adicionar "financeiro_agent": "financeiro_agent" em add_conditional_edges.
+7. Adicionar builder.add_edge("financeiro_agent", "output_supervisor").
+8. Adicionar financeiro_agent ao handlers do supervisor, se o modo supervisor for usado.
+9. Registrar financeiro_agent em config/agents.yaml.
+10. Criar config/agents/financeiro_agent/*.yaml.
+11. Configurar a intent em config/routing.yaml.
+12. Configurar tools, MCP server e mcp_parameter_mapping.yaml.
+13. Testar via /gateway/message.
+14. Validar logs de routing, node, edge, MCP, RAG, output guardrails, judge e persistência.
 ```
 
-In the logs, look for events like:
+Essa ordem evita que o desenvolvedor crie configuração YAML antes de existir nó real no grafo, ou crie a classe do agente sem que o LangGraph consiga alcançá-la.
+
+---
+
+### 6.14. Como testar se o nó entrou no grafo
+
+Após iniciar o backend, envie uma mensagem que bata com a intent financeira, por exemplo:
+
+```text
+Quero consultar o pagamento do meu boleto.
+```
+
+Nos logs, procure por eventos como:
 
 ```text
 router.decision route=financeiro_agent
@@ -2732,41 +2748,41 @@ langgraph.node.started node=financeiro_agent
 workflow.agent.financeiro.started
 ```
 
-If it shows:
+Se aparecer:
 
 ```text
 router.decision route=financeiro_agent
 ```
 
-but the following does not appear:
+mas não aparecer:
 
 ```text
 langgraph.node.started node=financeiro_agent
 ```
 
-then the problem is probably in `add_conditional_edges()`.
+então o problema provavelmente está no `add_conditional_edges()`.
 
-If it shows:
+Se aparecer:
 
 ```text
 langgraph.node.started node=financeiro_agent
 ```
 
-but this doesn't appear:
+mas não aparecer:
 
 ```text
 workflow.agent.financeiro.started
 ```
 
-then the problem is probably in the wrapper.
+então o problema provavelmente está no wrapper.
 
-If it shows:
+Se aparecer:
 
 ```text
 workflow.agent.financeiro.started
 ```
 
-but there is no final response, check the edges after the agent:
+mas não houver resposta final, verifique os edges depois do agente:
 
 ```python
 builder.add_edge("financeiro_agent", "output_supervisor")
@@ -2774,232 +2790,232 @@ builder.add_edge("financeiro_agent", "output_supervisor")
 
 ---
 
-### 6.15. Common mistakes in this chapter
+### 6.15. Erros comuns neste capítulo
 
 ```text
-Creating FinanceAgent, but forgetting to instantiate self.financeiro.
-Instantiating self.financeiro, but forgetting the wrapper financeiro_agent(self, state).
-Create the wrapper, but forget builder.add_node().
-Adding builder.add_node(), but forgetting add_conditional_edges().
-Configure routing.yaml with agent: financeiro, but the graph expects financeiro_agent.
-Add the conditional route, but forget builder.add_edge("financeiro_agent", "output_supervisor").
-Add in router mode, but forget the supervisor's handlers map.
-Put business logic in the wrapper instead of keeping it in FinanceiroAgent.run().
-Copy billing_agent examples without changing names to financeiro_agent.
+Criar FinanceiroAgent, mas esquecer de instanciar self.financeiro.
+Instanciar self.financeiro, mas esquecer o wrapper financeiro_agent(self, state).
+Criar o wrapper, mas esquecer builder.add_node().
+Adicionar builder.add_node(), mas esquecer add_conditional_edges().
+Configurar routing.yaml com agent: financeiro, mas o grafo espera financeiro_agent.
+Adicionar a rota condicional, mas esquecer builder.add_edge("financeiro_agent", "output_supervisor").
+Adicionar no modo router, mas esquecer o mapa handlers do supervisor.
+Colocar lógica de negócio no wrapper em vez de manter em FinanceiroAgent.run().
+Copiar exemplos de billing_agent sem trocar nomes para financeiro_agent.
 ```
 
 ---
 
-### 6.16. Chapter summary
+### 6.16. Resumo do capítulo
 
-For `finance_agent` to work, three things need to be aligned:
+Para o `financeiro_agent` funcionar, três coisas precisam estar alinhadas:
 
 ```text
-1. Agent code
+1. Código do agente
    app/agents/financeiro_agent.py
    class FinanceiroAgent
 
-2. Registration in the workflow
+2. Registro no workflow
    self.financeiro = FinanceiroAgent(...)
    async def financeiro_agent(self, state)
    builder.add_node("financeiro_agent", ...)
    add_conditional_edges(... "financeiro_agent": "financeiro_agent")
    builder.add_edge("financeiro_agent", "output_supervisor")
 
-3. Configuration
+3. Configuração
    config/agents.yaml
    config/routing.yaml
    config/tools.yaml
    config/mcp_servers.yaml
    config/mcp_parameter_mapping.yaml
    config/agents/financeiro_agent/*.yaml
-   ```
+```
 
-When these three blocks are consistent, LangGraph can exit the routing, enter the financial agent, pass through the supervisors/guardrails/judges, and persist the response.
+Quando esses três blocos estão consistentes, o LangGraph consegue sair do roteamento, entrar no agente financeiro, passar pelos supervisores/guardrails/judges e persistir a resposta.
 
 ---
 
 
-## 7. Adjusting the agent state
+## 7. Ajustando o estado do agente
 
-### 7.1. Before the code: what is the state?
+### 7.1. Antes do código: o que é o state?
 
-The `state` is the object that travels between the LangGraph nodes. It functions as the short-term memory of the current execution.
+O `state` é o objeto que trafega entre os nós do LangGraph. Ele funciona como a memória de curto prazo da execução atual.
 
-It is not the database, it is not the complete conversational memory, and it should not become a giant repository of information.
+Ele não é o banco de dados, não é a memória conversacional completa e não deve virar um repositório gigante de informações.
 
-Use the `state` for data that needs to circulate between nodes, for example:
-
-```text
-user text
-chosen intent
-chosen route
-partial response
-result of a tool
-next state of the conversation
-decision flags
-```
-
-Do not use `state` for:
+Use o `state` para dados que precisam circular entre nós, por exemplo:
 
 ```text
-long conversation history
-large files
-unnecessary complete responses from external systems
-raw document content
-extensive logs
+texto do usuário
+intent escolhida
+rota escolhida
+resposta parcial
+resultado de uma tool
+próximo estado da conversa
+flags de decisão
 ```
 
-### 7.2. When to change `app/state.py`
+Não use o `state` para:
 
-Edit:
+```text
+histórico longo de conversa
+arquivos grandes
+respostas completas de sistemas externos sem necessidade
+conteúdo bruto de documentos
+logs extensos
+```
+
+### 7.2. Quando alterar `app/state.py`
+
+Edite:
 
 ```text
 app/state.py
 ```
 
-Only add new fields if the agent needs to share specific information with other nodes.
+Somente adicione novos campos se o agente precisar compartilhar informações específicas com outros nós.
 
-Example:
+Exemplo:
 
 ```python
 class AgentState(TypedDict, total=False):
-    # existing fields...
-    financial_context: dict[ str, Any]
-    financial_decision: dict[ str, Any]
+    # campos existentes...
+    financial_context: dict[str, Any]
+    financial_decision: dict[str, Any]
 ```
 
-### 7.3. Decision criteria
+### 7.3. Critério de decisão
 
-Before creating a new field, ask:
+Antes de criar um campo novo, pergunte:
 
 ```text
-Does another node need to read this data?
-Does this data need to survive the next step in the workflow?
-Is this data small and structured?
-Does this data help with auditing or decision-making?
+Outro nó precisa ler este dado?
+Este dado precisa sobreviver ao próximo passo do workflow?
+Este dado é pequeno e estruturado?
+Este dado ajuda na auditoria ou na decisão?
 ```
 
-If the answer is no, leave the data locally with the agent or save it in an appropriate repository.
+Se a resposta for não, deixe o dado local ao agente ou grave em repositório apropriado.
 
 ---
 
-## 8. Registering the agent in `config/agents.yaml`
+## 8. Registrando o agente em `config/agents.yaml`
 
-### 8.1. Before YAML: what is `agents.yaml` for?
+### 8.1. Antes do YAML: para que serve `agents.yaml`?
 
-`agents.yaml` is the official registry of available agents. It does not run the agent by itself, but it informs the framework which agents exist, which isolated configurations they use, and which metadata describes the domain.
+O `agents.yaml` é o cadastro oficial dos agentes disponíveis. Ele não executa o agente sozinho, mas informa ao framework quais agentes existem, quais configurações isoladas eles usam e quais metadados descrevem o domínio.
 
-It answers:
+Ele responde:
 
 ```text
-What is the agent_id?
-What friendly name appears in listings and debug?
-Where are the specific prompts, guardrails, and judges?
-Which domain does this agent serve?
-What metadata helps routing, auditing, and operation?
+Qual é o agent_id?
+Qual nome amigável aparece em listagens e debug?
+Onde estão prompt, guardrails e judges específicos?
+Qual domínio esse agente atende?
+Quais metadados ajudam roteamento, auditoria e operação?
 ```
 
-### 8.2. Record example
+### 8.2. Exemplo de registro
 
-Edit:
+Edite:
 
 ```text
 config/agents.yaml
 ```
 
-Add:
+Adicione:
 
 ```yaml
 agents:
-- agent_id: financeiro_agent
-   name: Finance Agent
-   description: Agent for financial questions, payments, balances, agreements, and duplicates.
-   prompt_policy_path: ./config/agents/financeiro_agent/prompt_policy.yaml
-   routing_config_path: ./config/routing.yaml
-   guardrails_config_path: ./config/agents/financeiro_agent/guardrails.yaml
-   judges_config_path: ./config/agents/financeiro_agent/judges.yaml
-   mcp_servers_config_path: ./config/mcp_servers.yaml
-   tools_config_path: ./config/tools.yaml
-   metadata:
-   domain: financeiro
-   system_prefix: |
-   You are running financeiro_agent.
-   Use only policies, memory, checkpoints, guardrails, and judges from this agent_id.
-   Do not mix history or decisions from other agents.
-   ```
-
-### 8.3. Precautions
-
-The `agent_id` needs to be consistent with:
-
-```text
-node name in the workflow
-name used in routing.yaml
-canonical session_id
-config/agents/<agent_id>/ folder
-observability metadata
+  - agent_id: financeiro_agent
+    name: Financeiro Agent
+    description: Agente para dúvidas financeiras, pagamentos, saldos, acordos e segunda via.
+    prompt_policy_path: ./config/agents/financeiro_agent/prompt_policy.yaml
+    routing_config_path: ./config/routing.yaml
+    guardrails_config_path: ./config/agents/financeiro_agent/guardrails.yaml
+    judges_config_path: ./config/agents/financeiro_agent/judges.yaml
+    mcp_servers_config_path: ./config/mcp_servers.yaml
+    tools_config_path: ./config/tools.yaml
+    metadata:
+      domain: financeiro
+      system_prefix: |
+        Você está executando o financeiro_agent.
+        Use somente políticas, memória, checkpoints, guardrails e judges deste agent_id.
+        Não misture histórico ou decisões de outros agentes.
 ```
 
-Avoid renaming `agent_id` after the agent is already in production, because this can break history, memory, checkpoint, and metrics.
+### 8.3. Cuidados
+
+O `agent_id` precisa ser consistente com:
+
+```text
+nome do nó no workflow
+nome usado em routing.yaml
+session_id canônico
+pasta config/agents/<agent_id>/
+metadados de observabilidade
+```
+
+Evite renomear `agent_id` depois que o agente já estiver em produção, porque isso pode quebrar histórico, memória, checkpoint e métricas.
 
 ---
 
-## 9. Creating isolated agent configurations
+## 9. Criando configurações isoladas do agente
 
-### 9.1. Before YAML: why isolate configuration by agent?
+### 9.1. Antes do YAML: por que isolar configuração por agente?
 
-Each agent can have its own prompt policy, guardrails, and judges. A financial agent may require explicit confirmation before an action. A support agent may allow for more open responses. A legal agent may require documentary evidence.
+Cada agente pode ter política de prompt, guardrails e judges próprios. Um agente financeiro pode exigir confirmação explícita antes de uma ação. Um agente de suporte pode permitir respostas mais abertas. Um agente jurídico pode exigir evidência documental.
 
-So, avoid putting everything in the global file. Use global configuration for corporate rules and local configuration for domain rules.
+Por isso, evite colocar tudo no arquivo global. Use configuração global para regras corporativas e configuração local para regras do domínio.
 
-Create:
+Crie:
 
 ```text
-config/agents/financial_agent/
+config/agents/financeiro_agent/
 ```
 
 ### 9.2. `prompt_policy.yaml`
 
-This file defines the agent's basic stance.
+Esse arquivo define a postura base do agente.
 
 ```yaml
 id: financeiro_agent_prompt_policy
 version: 1
-description: Isolated base prompt of the financial agent.
+description: Prompt base isolado do agente financeiro.
 system_prefix: |
-You are a corporate agent specializing in financial services.
-Be clear, objective, auditable, and don't make up data.
-When you need to perform an action, use configured tools.
-When mandatory information is missing, ask only for the necessary data.
+  Você é um agente corporativo especializado em atendimento financeiro.
+  Seja claro, objetivo, auditável e não invente dados.
+  Quando precisar executar uma ação, use ferramentas configuradas.
+  Quando faltar informação obrigatória, peça apenas o dado necessário.
 ```
 
-Use this file for persistent behavior rules, not for temporary test rules.
+Use este arquivo para regras persistentes de comportamento, não para regras temporárias de teste.
 
 ### 9.3. `guardrails.yaml`
 
-This file complements the global guardrails.
+Esse arquivo complementa os guardrails globais.
 
 ```yaml
 input:
-- code: MSK
-   enabled: true
-- code: VLOOP
-   enabled: true
-- code: PINJ
-   enabled: true
-   output:
-- code: REVPREC
-   enabled: true
-- code: CMP
-   enabled: true
-   ```
+  - code: MSK
+    enabled: true
+  - code: VLOOP
+    enabled: true
+  - code: PINJ
+    enabled: true
+output:
+  - code: REVPREC
+    enabled: true
+  - code: CMP
+    enabled: true
+```
 
-Use guardrail when the response needs to be blocked, sanitized, or reviewed by rule.
+Use guardrail quando a resposta precisa ser bloqueada, sanitizada ou revisada por regra.
 
 ### 9.4. `judges.yaml`
 
-Judges evaluate quality, adherence, groundedness, and other criteria after the response is produced.
+Judges avaliam qualidade, aderência, groundedness e outros critérios após a resposta ser produzida.
 
 ```yaml
 judges:
@@ -3011,9 +3027,9 @@ judges:
     type: deterministic
     enabled: true
     threshold: 0.6
-   ```
+```
 
-Another example (with judge llm):
+Outro exemplo (com judge llm):
 
 ```yaml
 enabled: true
@@ -3038,148 +3054,147 @@ judges:
     fail_closed: true
 ```
 
-
-Use judge to evaluate the response. Use guardrail to block or protect. Use prompt to guide behavior.
+Use judge para avaliar resposta. Use guardrail para bloquear ou proteger. Use prompt para orientar comportamento.
 
 ---
 
-## 10. Configuring routing in `config/routing.yaml`
+## 10. Configurando roteamento em `config/routing.yaml`
 
-### 10.1. Before YAML: what is routing?
+### 10.1. Antes do YAML: o que é roteamento?
 
-Routing is the decision of which agent should handle the message.
+Roteamento é a decisão de qual agente deve tratar a mensagem.
 
-In a multi-agent system, the user should not need to know which agent to call. They write a message, and the framework decides the route.
+Em um sistema multiagente, o usuário não deveria precisar saber qual agente chamar. Ele escreve uma mensagem, e o framework decide a rota.
 
-The router typically considers:
+O roteador normalmente considera:
 
 ```text
-user text
-current conversation status
+texto do usuário
+estado atual da conversa
 keywords
 examples
-priority
-agent_id requested
-status policies
-LLM router, if enabled
+prioridade
+agent_id solicitado
+políticas de estado
+LLM router, se habilitado
 ```
 
-### 10.2. When to create a new intent?
+### 10.2. Quando criar uma intent nova?
 
-Create an intent when there is a clear request category that should go to a specific agent.
+Crie uma intent quando existir uma categoria clara de solicitação que deve ir para um agente específico.
 
-Example of a financial intent:
+Exemplo de intent financeira:
 
 ```yaml
 intents:
-- name: finance_payments
-   domain: finance
-   agent: finance_agent
-   description: Questions about payment, balance, invoice, payment slip, agreement, dispute, and duplicate.
-   priority: 15
-   mcp_tools:
-   - consult_bill_financial
-   - consult_payments_financial
-      keywords:
-   - payment
-   - payment slip
-   - balance
-   - agreement
-   - financial
-   - duplicate
-   - due date
-   - charge
-   - dispute
-      examples:
-   - I want to check my payment.
-   - I need a duplicate of the payment slip.
-   - My payment has not yet been processed.
+  - name: financeiro_pagamentos
+    domain: financeiro
+    agent: financeiro_agent
+    description: Dúvidas sobre pagamento, saldo, fatura, boleto, acordo, contestação e segunda via.
+    priority: 15
+    mcp_tools:
+      - consultar_titulo_financeiro
+      - consultar_pagamentos_financeiro
+    keywords:
+      - pagamento
+      - boleto
+      - saldo
+      - acordo
+      - financeiro
+      - segunda via
+      - vencimento
+      - cobrança
+      - contestação
+    examples:
+      - Quero consultar meu pagamento.
+      - Preciso da segunda via do boleto.
+      - Meu pagamento ainda não foi baixado.
 ```
 
-### 10.3. What does `mcp_tools` mean in the intent?
+### 10.3. O que significa `mcp_tools` na intent?
 
-`mcp_tools` indicates which tools should be made available/collected when this intent is chosen. This way, the agent doesn't have to manually decide each call in all simple cases.
+`mcp_tools` indica quais tools devem ser disponibilizadas/coletadas quando essa intent for escolhida. Assim, o agente não precisa decidir manualmente cada chamada em todos os casos simples.
 
-The flow is:
+O fluxo fica:
 
 ```text
-routing.yaml chooses intent
-intent points to agent
-intent declares mcp_tools
-AgentRuntimeMixin collects MCP context
-agent uses the data in the response
+routing.yaml escolhe intent
+intent aponta agent
+intent declara mcp_tools
+AgentRuntimeMixin coleta contexto MCP
+agente usa os dados na resposta
 ```
 
-### 10.4. State policies
+### 10.4. Políticas de estado
 
-If the conversation is already in a specific state, the next message may need to go back to the same agent, even if the text is short.
+Se a conversa já estiver em um estado específico, a próxima mensagem pode precisar voltar ao mesmo agente, mesmo que o texto seja curto.
 
-Example:
+Exemplo:
 
 ```yaml
 state_policies:
-- state: WAITING_FINANCEIRO_CONFIRMATION
-   agent: financeiro_agent
-   description: Keeps short confirmations in the finance flow.
-   ```
+  - state: WAITING_FINANCEIRO_CONFIRMATION
+    agent: financeiro_agent
+    description: Mantém confirmações curtas no fluxo financeiro.
+```
 
-This prevents a response like “yes” from being routed to the wrong agent.
+Isso evita que uma resposta como “sim” seja roteada para o agente errado.
 
-### 10.5. Router vs. supervisor
+### 10.5. Router versus supervisor
 
-In router mode:
+No modo router:
 
 ```env
 ROUTING_MODE=router
 ```
 
-The framework chooses a route more directly, usually by rules, keywords, examples, and score.
+O framework escolhe uma rota de forma mais direta, normalmente por regras, keywords, examples e score.
 
-In supervisor mode:
+No modo supervisor:
 
 ```env
 ROUTING_MODE=supervisor
 ```
 
-A supervisor can decide the sequence of agents, handoff, or combination of responses.
+Um supervisor pode decidir a sequência de agentes, handoff ou combinação de respostas.
 
-Use router when the domain is well mapped. Use supervisor when the conversation requires decomposition, multiple agents, or more flexible decision-making.
+Use router quando o domínio for bem mapeado. Use supervisor quando a conversa exigir decomposição, múltiplos agentes ou decisão mais flexível.
 
 ---
 
-## 11. Configuring tools in `config/tools.yaml`
+## 11. Configurando tools em `config/tools.yaml`
 
-### 11.1. Before YAML: what is a tool?
+### 11.1. Antes do YAML: o que é uma tool?
 
-A tool is an external capability that the agent can use to obtain data or perform an action.
+Uma tool é uma capacidade externa que o agente pode usar para obter dados ou executar uma ação.
 
-Examples:
+Exemplos:
 
 ```text
-check invoice
-check payment
-open ticket
-search order
-cancel service
-check knowledge base
+consultar fatura
+consultar pagamento
+abrir protocolo
+buscar pedido
+cancelar serviço
+consultar base de conhecimento
 ```
 
-The tool is not necessarily the actual system. It is the contract that the backend knows. The real system is behind the MCP Server.
+A tool não é necessariamente o sistema real. Ela é o contrato que o backend conhece. O sistema real fica atrás do MCP Server.
 
-### 11.2. Declaring tools
+### 11.2. Declarando tools
 
-Edit:
+Edite:
 
 ```text
 config/tools.yaml
 ```
 
-Add:
+Adicione:
 
 ```yaml
 tools:
   consultar_titulo_financeiro:
-    description: Consults a financial security by customer and contract.
+    description: Consulta um título financeiro por cliente e contrato.
     mcp_server: telecom
     enabled: true
     args_schema:
@@ -3187,58 +3202,58 @@ tools:
       contract_id: string
 
   consultar_pagamentos_financeiro:
-    description: Consults financial payments by customer.
+    description: Consulta pagamentos financeiros por cliente.
     mcp_server: telecom
     enabled: true
     args_schema:
       customer_id: string
 ```
 
-### 11.3. How to think about a tool
+### 11.3. Como pensar sobre uma tool
 
-Before declaring a tool, define:
+Antes de declarar uma tool, defina:
 
 ```text
-What business question does it answer?
-Does it only query or does it perform an action?
-Which parameters are required?
-Which parameters come from the canonical identity?
-Which MCP Server implements the tool?
-What timeout and fallback are acceptable?
-Does the result have sensitive data that needs to be masked?
+Qual pergunta de negócio ela responde?
+Ela só consulta ou executa uma ação?
+Quais parâmetros são obrigatórios?
+Quais parâmetros vêm da identidade canônica?
+Qual MCP Server implementa a tool?
+Qual timeout e fallback são aceitáveis?
+O resultado tem dados sensíveis que precisam ser mascarados?
 ```
 
-The backend should not directly call HTTP/SOAP/DB from business systems when this call can be standardized via the MCP Tool Router.
+O backend não deve chamar diretamente HTTP/SOAP/DB de sistemas de negócio quando essa chamada puder ser padronizada via MCP Tool Router.
 
 ---
 
-## 12. Configuring MCP servers
+## 12. Configurando servidores MCP
 
-### 12.1. Before YAML: What is the MCP Server?
+### 12.1. Antes do YAML: o que é o MCP Server?
 
-The MCP Server is the adapter between the agent world and the real systems. It allows the backend to communicate with tools in a standardized way, without knowing details about REST, SOAP, database, queues or mocks.
+O MCP Server é o adaptador entre o mundo do agente e os sistemas reais. Ele permite que o backend converse com ferramentas de forma padronizada, sem conhecer detalhes de REST, SOAP, banco, filas ou mocks.
 
-The design is:
+O desenho é:
 
 ```text
-Agent
-↓
-Framework MCP Tool Router
-↓
-Domain MCP Server
-↓
-Real system, mock, database, REST, SOAP or internal service
+Agente
+  ↓
+MCP Tool Router do framework
+  ↓
+MCP Server do domínio
+  ↓
+Sistema real, mock, banco, REST, SOAP ou serviço interno
 ```
 
-### 12.2. Local configuration
+### 12.2. Configuração local
 
-Edit:
+Edite:
 
 ```text
 config/mcp_servers.yaml
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 servers:
@@ -3246,19 +3261,18 @@ servers:
     transport: http
     endpoint: http://localhost:8300/mcp
     enabled: true
-    description: Local Finance MCP Server.
-
+    description: MCP Server Financeiro local.
 ```
 
-### 12.3. Configuration in Docker Compose
+### 12.3. Configuração em Docker Compose
 
-Edit:
+Edite:
 
 ```text
 config/mcp_servers.docker.yaml
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 servers:
@@ -3266,14 +3280,14 @@ servers:
     transport: http
     endpoint: http://financeiro-mcp:8300/mcp
     enabled: true
-    description: Financeiro MCP Server in Docker.
+    description: MCP Server Financeiro em Docker.
 ```
 
-### 12.4. How to avoid a common endpoint error
+### 12.4. Como evitar erro comum de endpoint
 
-Locally, `localhost` works because the backend and MCP run on the same machine.
+Localmente, `localhost` funciona porque backend e MCP rodam na mesma máquina.
 
-Within Docker Compose, `localhost` within the backend container points to the backend container itself, not to the MCP container. Therefore, in Docker, use the service name:
+Dentro do Docker Compose, `localhost` dentro do container do backend aponta para o próprio container do backend, não para o container do MCP. Por isso, em Docker, use o nome do serviço:
 
 ```text
 http://financeiro-mcp:8300/mcp
@@ -3281,22 +3295,22 @@ http://financeiro-mcp:8300/mcp
 
 ---
 
-## 13. Configuring MCP parameter mapping
+## 13. Configurando mapeamento de parâmetros MCP
 
-### 13.1. Before YAML: why is there mapping?
+### 13.1. Antes do YAML: por que existe mapeamento?
 
-The framework works with canonical keys so as not to depend on the specific names of each system.
+O framework trabalha com chaves canônicas para não depender dos nomes específicos de cada sistema.
 
-Example:
+Exemplo:
 
 ```text
-customer_key = canonical customer in the framework
-contract_key = canonical contract/invoice/order/title
-interaction_key = external interaction
-session_key = technical session
+customer_key = cliente canônico no framework
+contract_key = contrato/fatura/pedido/título canônico
+interaction_key = interação externa
+session_key = sessão técnica
 ```
 
-But each tool can expect different names:
+Mas cada tool pode esperar nomes diferentes:
 
 ```text
 customer_id
@@ -3308,11 +3322,11 @@ invoice_id
 order_id
 ```
 
-The `mcp_parameter_mapping.yaml` does this translation without requiring the agent to know the internal names of each MCP.
+O `mcp_parameter_mapping.yaml` faz essa tradução sem obrigar o agente a conhecer os nomes internos de cada MCP.
 
-### 13.2. Example
+### 13.2. Exemplo
 
-Edit:
+Edite:
 
 ```text
 config/mcp_parameter_mapping.yaml
@@ -3335,120 +3349,120 @@ mcp_parameter_mapping:
         session_key: session_id
 ```
 
-Interpretation:
+Interpretação:
 
 ```text
-customer_key  -> canonical key in the framework
-customer_id   -> parameter expected by the MCP tool
+customer_key  -> chave canônica no framework
+customer_id   -> parâmetro esperado pela tool MCP
 ```
 
-### 13.3. How to validate the mapping
+### 13.3. Como validar o mapeamento
 
-If the tool receives the wrong parameter, investigate in this order:
+Se a tool recebe parâmetro errado, investigue nesta ordem:
 
 ```text
-payload sent to /gateway/message
+payload enviado ao /gateway/message
 config/identity.yaml
-business_context resolved
+business_context resolvido
 config/mcp_parameter_mapping.yaml
-args_schema of the tool
-actual signature on the MCP Server
+args_schema da tool
+assinatura real no MCP Server
 ```
 
 ---
 
-## 14. Configuring business identity
+## 14. Configurando identidade de negócio
 
-### 14.1. Before YAML: what is business identity?
+### 14.1. Antes do YAML: o que é identidade de negócio?
 
-Business identity is the standardization of the keys that represent the customer, contract, order, protocol, session or interaction.
+Identidade de negócio é a normalização das chaves que representam o cliente, contrato, pedido, protocolo, sessão ou interação.
 
-Without this layer, each channel sends a different name and each tool expects a different name. The result is a parameter error, a tool without mandatory data, or a query to the wrong customer.
+Sem essa camada, cada canal envia um nome diferente e cada tool espera outro nome. O resultado é erro de parâmetro, tool sem dado obrigatório ou consulta ao cliente errado.
 
-`identity.yaml` responds:
+O `identity.yaml` responde:
 
 ```text
-Where can I extract customer_key from?
-Where can I extract contract_key?
-Where can I extract interaction_key?
-Where can I extract session_key?
-Which keys are required?
+De onde posso extrair customer_key?
+De onde posso extrair contract_key?
+De onde posso extrair interaction_key?
+De onde posso extrair session_key?
+Quais chaves são obrigatórias?
 ```
-### 14.1.1. Identity Resolver and `identity.yaml`
+### 14.1.1. Identity Resolver e `identity.yaml`
 
-The `identity.yaml` file defines how the framework identifies the main business parameters received by the input channels.
+O arquivo `identity.yaml` define como o framework identifica os principais parâmetros de negócio recebidos pelos canais de entrada.
 
-It is responsible for transforming specific names of each channel, frontend or business domain into canonical names used internally by the framework.
+Ele é responsável por transformar nomes específicos de cada canal, frontend ou domínio de negócio em nomes canônicos usados internamente pelo framework.
 
-In other words, `identity.yaml` answers the question:
+Em outras palavras, o `identity.yaml` responde à pergunta:
 
-> When the channel sends a parameter called `msisdn`, `cpf`, `customer_id`, `invoice_id` or `ura_call_id`, what does that mean within the framework?
+> Quando o canal envia um parâmetro chamado `msisdn`, `cpf`, `customer_id`, `invoice_id` ou `ura_call_id`, o que isso significa dentro do framework?
 
-The result of this interpretation is used to assemble the `BusinessContext`.
+O resultado dessa interpretação é usado para montar o `BusinessContext`.
 
 ---
 
-### 14.1.2. Why `identity.yaml` exists
+### 14.1.2. Por que o `identity.yaml` existe
 
-Each channel or domain can use different names to represent the same information.
+Cada canal ou domínio pode usar nomes diferentes para representar a mesma informação.
 
-| Business concept | Telecom | Bank | Retail | Framework |
+| Conceito de negócio | Telecom | Banco | Retail | Framework |
 |---|---|---|---|---|
-| Customer | `msisdn` | `cpf` | `customer_id` | `customer_key` |
-| Contract / Account / Order | `invoice_id` | `account_id` | `order_id` | `contract_key` |
-| Interaction | `ura_call_id` | `protocol` | `ticket_id` | `interaction_key` |
-| Session | `session_id` | `session_id` | `session_id` | `session_key` |
+| Cliente | `msisdn` | `cpf` | `customer_id` | `customer_key` |
+| Contrato / Conta / Pedido | `invoice_id` | `account_id` | `order_id` | `contract_key` |
+| Interação | `ura_call_id` | `protocol` | `ticket_id` | `interaction_key` |
+| Sessão | `session_id` | `session_id` | `session_id` | `session_key` |
 
-Without `identity.yaml`, the framework code would have to know all these names directly.
+Sem o `identity.yaml`, o código do framework teria que conhecer todos esses nomes diretamente.
 
-Bad example:
+Exemplo ruim:
 
 ```python
 customer_key = (
-    request.get("msisdn")
-    or request.get("cpf")
-    or request.get("customer_id")
+        request.get("msisdn")
+        or request.get("cpf")
+        or request.get("customer_id")
 )
 
 contract_key = (
-    request.get("invoice_id")
-    or request.get("account_id")
-    or request.get("order_id")
+        request.get("invoice_id")
+        or request.get("account_id")
+        or request.get("order_id")
 )
 ```
 
-This type of scattered logic makes the framework difficult to maintain, difficult to scale, and very tightly coupled to specific domains.
+Esse tipo de lógica espalhada deixa o framework difícil de manter, difícil de escalar e muito acoplado aos domínios específicos.
 
-With `identity.yaml`, this rule is centralized and configurable.
+Com o `identity.yaml`, essa regra fica centralizada e configurável.
 
 ---
 
-### 14.1.3. Role of `identity.yaml` in the flow
+### 14.1.3. Papel do `identity.yaml` no fluxo
 
-The `identity.yaml` acts right at the entrance of the framework, before the creation of the `BusinessContext`.
+O `identity.yaml` atua logo na entrada do framework, antes da criação do `BusinessContext`.
 
-Simplified flow:
+Fluxo simplificado:
 
 ```text
-Frontend / Channel
-↓
-Raw parameters
-↓
+Frontend / Canal
+        ↓
+Parâmetros brutos
+        ↓
 identity.yaml
-↓
+        ↓
 Identity Resolver
-↓
+        ↓
 BusinessContext
-↓
+        ↓
 LangGraph / Agent Runtime
-↓
+        ↓
 MCP Tool Router
 ```
 
-Example:
+Exemplo:
 
 ```text
-Frontend input:
+Entrada do frontend:
 
 msisdn=11999999999
 invoice_id=3000131180
@@ -3465,7 +3479,7 @@ interaction_key=301953872
 
 ---
 
-### 14.1.4. Example of `identity.yaml`
+### 14.1.4. Exemplo de `identity.yaml`
 
 ```yaml
 identity:
@@ -3521,15 +3535,15 @@ identity:
 
 ---
 
-### 14.1.5. Canonical fields of the framework
+### 14.1.5. Campos canônicos do framework
 
-The purpose of `identity.yaml` is to fill in the canonical fields used by `BusinessContext`.
+O objetivo do `identity.yaml` é preencher os campos canônicos usados pelo `BusinessContext`.
 
 #### 14.1.5.1. `customer_key`
 
-Represents the main customer of the interaction.
+Representa o cliente principal da interação.
 
-It can come from:
+Pode vir de:
 
 ```text
 msisdn
@@ -3540,28 +3554,28 @@ client_id
 phone_number
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 customer_key:
   - msisdn
   - cpf
   - customer_id
-   ```
+```
 
-Input:
+Entrada:
 
 ```json
 {
-"msisdn": "11999999999"
+  "msisdn": "11999999999"
 }
 ```
 
-Internal result:
+Resultado interno:
 
 ```json
 {
-"customer_key": "11999999999"
+  "customer_key": "11999999999"
 }
 ```
 
@@ -3569,9 +3583,9 @@ Internal result:
 
 #### 14.1.5.2. `contract_key`
 
-Represents the contract, invoice, order, plan, or commercial resource associated with the interaction.
+Representa o contrato, fatura, pedido, plano ou recurso comercial associado à interação.
 
-It can come from:
+Pode vir de:
 
 ```text
 invoice_id
@@ -3582,28 +3596,28 @@ plan_id
 subscription_id
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 contract_key:
   - invoice_id
   - contract_id
   - order_id
-   ```
+```
 
-Input:
+Entrada:
 
 ```json
 {
-"invoice_id": "3000131180"
+  "invoice_id": "3000131180"
 }
 ```
 
-Internal result:
+Resultado interno:
 
 ```json
 {
-"contract_key": "3000131180"
+  "contract_key": "3000131180"
 }
 ```
 
@@ -3611,9 +3625,9 @@ Internal result:
 
 #### 14.1.5.3. `interaction_key`
 
-Represents the service interaction, protocol, ticket, call or message.
+Representa a interação de atendimento, protocolo, ticket, chamada ou mensagem.
 
-It can come from:
+Pode vir de:
 
 ```text
 ura_call_id
@@ -3624,28 +3638,28 @@ call_id
 interaction_id
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 interaction_key:
   - ura_call_id
   - protocol
   - ticket_id
-   ```
+```
 
-Input:
+Entrada:
 
 ```json
 {
-"ura_call_id": "301953872"
+  "ura_call_id": "301953872"
 }
 ```
 
-Internal result:
+Resultado interno:
 
 ```json
 {
-"interaction_key": "301953872"
+  "interaction_key": "301953872"
 }
 ```
 
@@ -3653,9 +3667,9 @@ Internal result:
 
 #### 14.1.5.4. `account_key`
 
-Represents a financial account, billing account, or accounting group.
+Representa uma conta financeira, conta de cobrança ou agrupador contábil.
 
-It can come from:
+Pode vir de:
 
 ```text
 billing_account
@@ -3664,15 +3678,15 @@ financial_account_id
 account_key
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 account_key:
   - billing_account
   - billing_account_id
-   ```
+```
 
-Input:
+Entrada:
 
 ```json
 {
@@ -3680,7 +3694,7 @@ Input:
 }
 ```
 
-Internal result:
+Resultado interno:
 
 ```json
 {
@@ -3692,9 +3706,9 @@ Internal result:
 
 #### 14.1.5.5. `resource_key`
 
-Represents a specific technical resource, product, service, asset, or item.
+Representa um recurso técnico, produto, serviço, ativo ou item específico.
 
-It can come from:
+Pode vir de:
 
 ```text
 resource_id
@@ -3703,15 +3717,15 @@ service_id
 asset_id
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 resource_key:
   - product_id
   - service_id
-   ```
+```
 
-Input:
+Entrada:
 
 ```json
 {
@@ -3719,7 +3733,7 @@ Input:
 }
 ```
 
-Internal result:
+Resultado interno:
 
 ```json
 {
@@ -3731,9 +3745,9 @@ Internal result:
 
 #### 14.1.5.6. `session_key`
 
-Represents the conversational session.
+Representa a sessão conversacional.
 
-It can come from:
+Pode vir de:
 
 ```text
 session_id
@@ -3742,15 +3756,15 @@ thread_id
 session_key
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 session_key:
   - session_id
   - conversation_id
-   ```
+```
 
-Input:
+Entrada:
 
 ```json
 {
@@ -3758,7 +3772,7 @@ Input:
 }
 ```
 
-Internal result:
+Resultado interno:
 
 ```json
 {
@@ -3768,56 +3782,56 @@ Internal result:
 
 ---
 
-### 14.1.6. Complete example of input and output
+### 14.1.6. Exemplo completo de entrada e saída
 
-Input received by the gateway:
+Entrada recebida pelo gateway:
 
 ```json
 {
-    "channel": "web",
-    "agent": "telecom_contas",
-    "message": "I want to check my invoice",
-    "msisdn": "11999999999",
-    "invoice_id": "3000131180",
-    "ura_call_id": "301953872",
-    "use_mock": true
+  "channel": "web",
+  "agent": "telecom_contas",
+  "message": "Quero consultar minha fatura",
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872",
+  "use_mock": true
 }
 ```
 
-After applying `identity.yaml`, the framework assembles the following `BusinessContext`:
+Após aplicar o `identity.yaml`, o framework monta o seguinte `BusinessContext`:
 
 ```json
 {
-    "customer_key": "11999999999",
-    "contract_key": "3000131180",
-    "interaction_key": "301953872",
-    "account_key": null,
-    "resource_key": null,
-    "session_key": "default:telecom_contas:abc-123",
-    "metadata": {
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872",
+  "account_key": null,
+  "resource_key": null,
+  "session_key": "default:telecom_contas:abc-123",
+  "metadata": {
     "channel": "web",
     "agent": "telecom_contas",
     "use_mock": true
-}
+  }
 }
 ```
 
 ---
 
-### 14.1.7. Flow with Mermaid
+### 14.1.7. Fluxo com Mermaid
 
 ```mermaid
 flowchart TD
 
-    A[Frontend / Channel] --> B[Request with raw parameters]
+    A[Frontend / Canal] --> B[Request com parâmetros brutos]
 
     B --> C[Channel Gateway]
 
     C --> D[Identity Resolver]
 
-    D --> E[Loads identity.yaml]
+    D --> E[Carrega identity.yaml]
 
-    E --> F{Found alias?}
+    E --> F{Encontrou alias?}
 
     F -->|msisdn| G[customer_key]
     F -->|cpf| G
@@ -3844,106 +3858,106 @@ flowchart TD
 
 ---
 
-### 14.1.8. Sequence flow
+### 14.1.8. Fluxo em sequência
 
 ```mermaid
 sequenceDiagram
-participant FE as Frontend
-participant GW as Channel Gateway
-participant IR as Identity Resolver
-participant YAML as identity.yaml
-participant BC as BusinessContext
-participant LG as LangGraph
+    participant FE as Frontend
+    participant GW as Channel Gateway
+    participant IR as Identity Resolver
+    participant YAML as identity.yaml
+    participant BC as BusinessContext
+    participant LG as LangGraph
 
-    FE->>GW: Sends message + msisdn + invoice_id + ura_call_id
-    GW->>IR: Requests identity normalization
-    IR->>YAML: Loads configured aliases
+    FE->>GW: Envia message + msisdn + invoice_id + ura_call_id
+    GW->>IR: Solicita normalização de identidade
+    IR->>YAML: Carrega aliases configurados
     YAML-->>IR: customer_key, contract_key, interaction_key
-    IR->>BC: Sets up BusinessContext
-    BC->>LG: Injects business_context into state
+    IR->>BC: Monta BusinessContext
+    BC->>LG: Injeta business_context no state
 ```
 
 ---
 
-### 14.1.9. How `identity.yaml` relates to `BusinessContext`
+### 14.1.9. Como o `identity.yaml` se relaciona com o `BusinessContext`
 
-`identity.yaml` is not the `BusinessContext`.
+O `identity.yaml` não é o `BusinessContext`.
 
-It is the configuration used to create the `BusinessContext`.
+Ele é a configuração usada para criar o `BusinessContext`.
 
 ```text
 identity.yaml
-↓
-Defines aliases and identification rules
-↓
+    ↓
+Define aliases e regras de identificação
+    ↓
 Identity Resolver
-↓
-Creates BusinessContext
+    ↓
+Cria BusinessContext
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 customer_key:
   - msisdn
   - cpf
   - customer_id
-   ```
+```
 
-This means:
+Significa:
 
 ```text
-If msisdn, cpf or customer_id arrives,
-use the value found to fill in customer_key.
+Se chegar msisdn, cpf ou customer_id,
+use o valor encontrado para preencher customer_key.
 ```
 
 ---
 
-### 14.1.10. How `identity.yaml` differs from `mcp_parameter_mapping.yaml`
+### 14.1.10. Como o `identity.yaml` se diferencia do `mcp_parameter_mapping.yaml`
 
-The two files map names, but on opposite sides of the flow.
+Os dois arquivos fazem mapeamento de nomes, mas em lados opostos do fluxo.
 
-| File | Moment | Function |
+| Arquivo | Momento | Função |
 |---|---|---|
-| `identity.yaml` | Framework input | Translates external parameters to internal names |
-| `mcp_parameter_mapping.yaml` | Output for tools | Translates internal names to tool parameters |
+| `identity.yaml` | Entrada do framework | Traduz parâmetros externos para nomes internos |
+| `mcp_parameter_mapping.yaml` | Saída para tools | Traduz nomes internos para parâmetros da tool |
 
-Complete flow:
+Fluxo completo:
 
 ```text
-Channel input
+Entrada do canal
 msisdn, invoice_id, ura_call_id
-↓
+        ↓
 identity.yaml
-↓
+        ↓
 BusinessContext
 customer_key, contract_key, interaction_key
-↓
+        ↓
 mcp_parameter_mapping.yaml
-↓
+        ↓
 MCP Tool
 msisdn, invoice_id, ura_call_id
 ```
 
-`identity.yaml` looks at the input.
+O `identity.yaml` olha para a entrada.
 
-The `mcp_parameter_mapping.yaml` looks at the output.
+O `mcp_parameter_mapping.yaml` olha para a saída.
 
 ---
 
-### 14.1.11. Practical example in the Accounts domain
+### 14.1.11. Exemplo prático no domínio Contas
 
-Input:
+Entrada:
 
 ```json
 {
-    "msisdn": "11999999999",
-    "invoice_id": "3000131180",
-    "ura_call_id": "301953872"
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872"
 }
 ```
 
-Configuration in `identity.yaml`:
+Configuração em `identity.yaml`:
 
 ```yaml
 identity:
@@ -3958,17 +3972,17 @@ identity:
       - ura_call_id
 ```
 
-Internal result:
+Resultado interno:
 
 ```json
 {
-    "customer_key": "11999999999",
-    "contract_key": "3000131180",
-    "interaction_key": "301953872"
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872"
 }
 ```
 
-Then the agent can work with just the canonical names.
+Depois, o agente pode trabalhar apenas com os nomes canônicos.
 
 ```python
 customer = business_context.customer_key
@@ -3976,25 +3990,25 @@ contract = business_context.contract_key
 interaction = business_context.interaction_key
 ```
 
-They don't need to know that, in the TIM domain, the customer is represented by `msisdn`.
+Ele não precisa saber que, no domínio TIM, o cliente é representado por `msisdn`.
 
 ---
 
-### 14.1.12. Practical example with another domain
+### 14.1.12. Exemplo prático com outro domínio
 
-Imagine a retail agent.
+Imagine um agente de retail.
 
-Input:
+Entrada:
 
 ```json
 {
-    "customer_id": "C100",
-    "order_id": "ORD900",
-    "ticket_id": "T555"
+  "customer_id": "C100",
+  "order_id": "ORD900",
+  "ticket_id": "T555"
 }
 ```
 
-The same `identity.yaml` can have:
+O mesmo `identity.yaml` pode ter:
 
 ```yaml
 identity:
@@ -4015,29 +4029,29 @@ identity:
       - ticket_id
 ```
 
-Internal result:
+Resultado interno:
 
 ```json
 {
-    "customer_key": "C100",
-    "contract_key": "ORD900",
-    "interaction_key": "T555"
+  "customer_key": "C100",
+  "contract_key": "ORD900",
+  "interaction_key": "T555"
 }
 ```
 
-The framework continues to work the same way.
+O framework continua funcionando do mesmo jeito.
 
-Only the source channel/domain changes.
+O que muda é apenas o canal/domínio de origem.
 
 ---
 
-### 14.1.13. Benefits of `identity.yaml`
+### 14.1.13. Benefícios do `identity.yaml`
 
-The use of `identity.yaml` brings several important benefits.
+O uso do `identity.yaml` traz vários benefícios importantes.
 
-#### 14.1.13.1. Standardization
+#### 14.1.13.1. Padronização
 
-All agents now receive the same internal fields:
+Todos os agentes passam a receber os mesmos campos internos:
 
 ```text
 customer_key
@@ -4048,9 +4062,9 @@ resource_key
 session_key
 ```
 
-#### 14.1.13.2. Low coupling
+#### 14.1.13.2. Baixo acoplamento
 
-The agent does not need to know if the customer came as:
+O agente não precisa saber se o cliente veio como:
 
 ```text
 msisdn
@@ -4060,96 +4074,96 @@ customer_id
 phone_number
 ```
 
-They always use:
+Ele sempre usa:
 
 ```text
 customer_key
 ```
 
-#### 14.1.13.3. Multi-channel support
+#### 14.1.13.3. Suporte a múltiplos canais
 
-The same backend can receive data from:
+O mesmo backend pode receber dados de:
 
 ```text
 Web
 WhatsApp
-IVR
-Voice
-External API
+URA
+Voz
+API externa
 Batch
 ```
 
-Each channel can have its own names, but the framework standardizes everything.
+Cada canal pode ter seus próprios nomes, mas o framework normaliza tudo.
 
-#### 14.1.13.4. Support for multiple domains
+#### 14.1.13.4. Suporte a múltiplos domínios
 
-The same framework can serve:
+O mesmo framework pode atender:
 
 ```text
 Telecom
 Retail
-Banking
-Health
-Insurance
+Banco
+Saúde
+Seguros
 Backoffice
 ```
 
-Without changing the agent core.
+Sem mudar o núcleo do agente.
 
-#### 14.1.13.5. Evolution without code change
+#### 14.1.13.5. Evolução sem alteração de código
 
-If a new channel starts sending `phone_number` instead of `msisdn`, just add the alias:
+Se um novo canal começar a enviar `phone_number` em vez de `msisdn`, basta adicionar o alias:
 
 ```yaml
 customer_key:
   - msisdn
   - phone_number
-   ```
+```
 
-There is no need to change the agent code.
+Não é necessário alterar o código do agente.
 
 ---
 
-### 14.1.14. Recommended rules for `identity.yaml`
+### 14.1.14. Regras recomendadas para o `identity.yaml`
 
-#### 14.1.14.1. Always map to canonical names
+#### 14.1.14.1. Sempre mapear para nomes canônicos
 
-Avoid creating very specific internal fields, such as:
+Evite criar campos internos muito específicos, como:
 
 ```yaml
 msisdn_key:
   - msisdn
-   ```
+```
 
-Instead, use:
+Prefira:
 
 ```yaml
 customer_key:
   - msisdn
-   ```
+```
 
-Because `customer_key` works for any domain.
+Porque `customer_key` serve para qualquer domínio.
 
 ---
 
-#### 14.1.14.2. Do not put tool names in `identity.yaml`
+#### 14.1.14.2. Não colocar nomes de tools no `identity.yaml`
 
-Avoid this:
+Evite isto:
 
 ```yaml
-consult_invoice:
+consultar_fatura:
   msisdn: customer_key
 ```
 
-This type of configuration belongs to `mcp_parameter_mapping.yaml`.
+Esse tipo de configuração pertence ao `mcp_parameter_mapping.yaml`.
 
-The `identity.yaml` should only handle the input identity.
+O `identity.yaml` deve tratar apenas da identidade de entrada.
 
 ---
 
-#### 14.1.14.3. Keep aliases generic and reusable
+#### 14.1.14.3. Manter aliases genéricos e reutilizáveis
 
-Good example:
+Bom exemplo:
 
 ```yaml
 customer_key:
@@ -4157,26 +4171,26 @@ customer_key:
   - cpf
   - customer_id
   - client_id
-   ```
+```
 
-Less recommended example:
+Exemplo menos recomendado:
 
 ```yaml
 customer_key:
   - tim_msisdn
   - banco_cpf
   - retail_customer_id
-   ```
+```
 
-Unless the channel actually sends those specific names.
+A menos que o canal realmente envie esses nomes específicos.
 
 ---
 
-#### 14.1.14.4. Priority of aliases
+#### 14.1.14.4. Prioridade dos aliases
 
-When multiple aliases appear in the same request, the framework must use a priority rule.
+Quando vários aliases aparecem na mesma requisição, o framework deve usar uma regra de prioridade.
 
-Example:
+Exemplo:
 
 ```yaml
 customer_key:
@@ -4184,36 +4198,36 @@ customer_key:
   - customer_id
   - msisdn
   - cpf
-   ```
+```
 
-If the input contains:
+Se a entrada contiver:
 
 ```json
 {
-    "customer_key": "C999",
-    "msisdn": "11999999999"
+  "customer_key": "C999",
+  "msisdn": "11999999999"
 }
 ```
 
-It is recommended to prioritize the first alias in the list:
+O recomendado é priorizar o primeiro alias da lista:
 
 ```json
 {
-    "customer_key": "C999"
+  "customer_key": "C999"
 }
 ```
 
-Thus, fields that are already canonical have priority over external aliases.
+Assim, campos já canônicos têm prioridade sobre aliases externos.
 
 ---
 
-### 14.1.15. Conceptual implementation of the resolver
+### 14.1.15. Implementação conceitual do resolver
 
-Simplified example:
+Exemplo simplificado:
 
 ```python
 def resolve_identity(payload: dict, identity_config: dict) -> dict:
-aliases = identity_config.get("identity", {}).get("aliases", {})
+    aliases = identity_config.get("identity", {}).get("aliases", {})
 
     resolved = {}
 
@@ -4226,7 +4240,7 @@ aliases = identity_config.get("identity", {}).get("aliases", {})
     return resolved
 ```
 
-Use:
+Uso:
 
 ```python
 payload = {
@@ -4250,21 +4264,21 @@ resolved = resolve_identity(payload, identity_config)
 print(resolved)
 ```
 
-Result:
+Resultado:
 
 ```json
 {
-    "customer_key": "11999999999",
-    "contract_key": "3000131180",
-    "interaction_key": "301953872"
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872"
 }
 ```
 
 ---
 
-### 14.1.16. Example of setting up the `BusinessContext`
+### 14.1.16. Exemplo de montagem do `BusinessContext`
 
-After the identity is resolved, the framework can assemble the `BusinessContext`.
+Depois que a identidade é resolvida, o framework pode montar o `BusinessContext`.
 
 ```python
 business_context = BusinessContext(
@@ -4282,66 +4296,67 @@ business_context = BusinessContext(
 )
 ```
 
-This object now tracks the conversation within the workflow state.
+Esse objeto passa a acompanhar a conversa dentro do estado do workflow.
 
 ---
 
-### 14.1.17. Expected result within the state
+### 14.1.17. Resultado esperado dentro do estado
 
-After normalization, the LangGraph state may contain:
+Após a normalização, o estado do LangGraph pode conter:
 
 ```json
 {
-    "messages": [
-        {
-        "role": "user",
-        "content": "I want to check my bill"
-        }],
-    "business_context": {
-        "customer_key": "11999999999",
-        "contract_key": "3000131180",
-        "interaction_key": "301953872",
-        "account_key": null,
-        "resource_key": null,
-        "session_key": "default:telecom_contas:abc-123",
-        "metadata": {
-            "channel": "web",
-            "agent": "telecom_contas",
-            "use_mock": true
-        }
+  "messages": [
+    {
+      "role": "user",
+      "content": "Quero consultar minha fatura"
     }
+  ],
+  "business_context": {
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "account_key": null,
+    "resource_key": null,
+    "session_key": "default:telecom_contas:abc-123",
+    "metadata": {
+      "channel": "web",
+      "agent": "telecom_contas",
+      "use_mock": true
+    }
+  }
 }
 ```
 
-This state is what allows the next components of the framework to make decisions without directly depending on the input names.
+Esse estado é o que permite que os próximos componentes do framework tomem decisões sem depender diretamente dos nomes de entrada.
 
 ---
 
-### 14.1.18. Conclusion
+### 14.1.18. Conclusão
 
-`identity.yaml` is a fundamental part of the framework's architecture because it separates the business identity from the technical names received by the channels.
+O `identity.yaml` é uma peça fundamental da arquitetura do framework porque separa a identidade de negócio dos nomes técnicos recebidos pelos canais.
 
-It allows the framework to receive different parameters from multiple channels and domains, but standardizes everything to a single internal contract: the `BusinessContext`.
+Ele permite que o framework receba parâmetros diferentes de múltiplos canais e domínios, mas normalize tudo para um contrato interno único: o `BusinessContext`.
 
-In summary:
+Em resumo:
 
 ```text
 identity.yaml
-↓
-Interprets input parameters
-↓
-Normalizes external names
-↓
-Populates the BusinessContext
-↓
-Allows agents, workflows and tools to work in a standardized way
+    ↓
+Interpreta os parâmetros de entrada
+    ↓
+Normaliza nomes externos
+    ↓
+Preenche o BusinessContext
+    ↓
+Permite que agentes, workflows e tools trabalhem de forma padronizada
 ```
 
-The `identity.yaml` is therefore the framework's input translation layer.
+O `identity.yaml` é, portanto, a camada de tradução de entrada do framework.
 
-### 14.2. Example
+### 14.2. Exemplo
 
-Edit:
+Edite:
 
 ```text
 config/identity.yaml
@@ -4354,7 +4369,7 @@ identity:
     - session_key
   keys:
     customer_key:
-      description: Canonical customer.
+      description: Cliente canônico.
       sources:
         - business_context.customer_key
         - context.business_context.customer_key
@@ -4365,7 +4380,7 @@ identity:
         - cnpj
         - user_id
     contract_key:
-      description: Contract, order, invoice or main title.
+      description: Contrato, pedido, fatura ou título principal.
       sources:
         - business_context.contract_key
         - context.business_context.contract_key
@@ -4375,7 +4390,7 @@ identity:
         - invoice_id
         - order_id
     interaction_key:
-      description: External interaction key.
+      description: Chave externa da interação.
       sources:
         - business_context.interaction_key
         - context.business_context.interaction_key
@@ -4385,7 +4400,7 @@ identity:
         - message_id
         - protocol_id
     session_key:
-      description: Stable technical session.
+      description: Sessão técnica estável.
       sources:
         - business_context.session_key
         - context.business_context.session_key
@@ -4397,83 +4412,83 @@ identity:
         - session_id
 ```
 
-### 14.3. How to think about identity
+### 14.3. Como pensar sobre identidade
 
-Use the minimum necessary. Don't make everything mandatory. For a generic question, perhaps just `session_key` is sufficient. To consult a financial instrument, perhaps `customer_key` and `contract_key` are required.
+Use o mínimo necessário. Não torne tudo obrigatório. Para uma pergunta genérica, talvez só `session_key` seja suficiente. Para consultar um título financeiro, talvez `customer_key` e `contract_key` sejam obrigatórios.
 
-The resolved identity appears in `business_context` within the `state` and is used by the `MCP Tool Router`.
+A identidade resolvida aparece em `business_context` dentro do `state` e é usada pelo `MCP Tool Router`.
 
 ### 14.3.1. BusinessContext
 
-The `BusinessContext` is the standardized corporate envelope that carries the business identity of the conversation to the` tools`.
+O `BusinessContext` é o envelope corporativo padronizado que carrega a identidade de negócio da conversa até as ferramentas (`tools`).
 
-It allows the framework to receive parameters coming from different channels, normalize these parameters to standardized internal names, and then convert these names back to the format expected by each MCP Server or tool.
+Ele permite que o framework receba parâmetros vindos de diferentes canais, normalize esses parâmetros para nomes internos padronizados e depois converta novamente esses nomes para o formato esperado por cada MCP Server ou tool.
 
-In other words:
+Em outras palavras:
 
 ```text
-Channel / Frontend
-sends domain-specific names
-↓
+Canal / Frontend
+    envia nomes específicos do domínio
+        ↓
 Framework
-converts to canonical names
-↓
+    converte para nomes canônicos
+        ↓
 Agent Runtime / Tool Router
-uses the standardized context
-↓
+    usa o contexto padronizado
+        ↓
 MCP Parameter Mapper
-converts to the names expected by the tool
-↓
-MCP Server / Real tool
+    converte para os nomes esperados pela tool
+        ↓
+MCP Server / Tool real
 ```
 
 ---
 
-### 14.3.2. Problem that BusinessContext solves
+### 14.3.2. Problema que o BusinessContext resolve
 
-Without a business context layer, each agent would need to know the parameter names of each channel or domain directly.
+Sem uma camada de contexto de negócio, cada agente precisaria conhecer diretamente os nomes dos parâmetros de cada canal ou domínio.
 
-For example, in the case of Accounts, the frontend can send:
-
-```json
-{
-    "msisdn": "11999999999",
-    "invoice_id": "3000131180",
-    "ura_call_id": "301953872"
-}
-```
-
-But another domain could send:
+Por exemplo, no caso Contas, o frontend pode enviar:
 
 ```json
 {
-    "cpf": "12345678900",
-    "contract_id": "ABC123",
-    "protocol": "P987654"
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872"
 }
 ```
 
-And yet another domain could use:
+Mas outro domínio poderia enviar:
 
 ```json
 {
-    "customer_id": "CUST-001",
-    "order_id": "ORD-789",
-    "ticket_id": "TCK-555"
+  "cpf": "12345678900",
+  "contract_id": "ABC123",
+  "protocol": "P987654"
 }
 ```
 
-If each agent needed to understand all these names, the framework would be coupled to the details of each channel, each frontend, and each MCP Server.
+E outro domínio ainda poderia usar:
 
-`BusinessContext` avoids this by standardizing everything to an internal contract.
+```json
+{
+  "customer_id": "CUST-001",
+  "order_id": "ORD-789",
+  "ticket_id": "TCK-555"
+}
+```
+
+Se cada agente precisasse entender todos esses nomes, o framework ficaria acoplado aos detalhes de cada canal, cada frontend e cada MCP Server.
+
+O `BusinessContext` evita isso ao padronizar tudo para um contrato interno.
 
 ---
 
-### 14.3.3. Central idea
+### 14.3.3. Ideia central
 
-The framework transforms specific external names into standardized internal names.
+O framework transforma nomes externos específicos em nomes internos padronizados.
 
-Example:
+Exemplo:
 
 ```text
 msisdn         → customer_key
@@ -4482,7 +4497,7 @@ ura_call_id    → interaction_key
 session_id     → session_key
 ```
 
-Then, when a tool needs to be called, the framework can go the other way:
+Depois, quando uma tool precisa ser chamada, o framework pode fazer o caminho inverso:
 
 ```text
 customer_key     → msisdn
@@ -4491,18 +4506,18 @@ interaction_key  → ura_call_id
 session_key      → session_id
 ```
 
-Thus, the agent works with a stable internal model, while the mapper takes care of the external differences.
+Assim, o agente trabalha com um modelo interno estável, enquanto o mapper cuida das diferenças externas.
 
 ---
 
-### 14.3.4. Flow overview
+### 14.3.4. Visão geral do fluxo
 
 ```mermaid
 flowchart TD
 
-    U[User / Web Channel, WhatsApp, Voice] --> F[Frontend / Channel Client]
+    U[Usuário / Canal Web, WhatsApp, Voz] --> F[Frontend / Channel Client]
 
-    F -->|message + channel parameters| G[Channel Gateway]
+    F -->|mensagem + parâmetros do canal| G[Channel Gateway]
 
     G --> I[Identity Resolver]
 
@@ -4512,7 +4527,7 @@ flowchart TD
 
     S --> LG[LangGraph Workflow]
 
-    LG --> SUP[Supervisor or Router]
+    LG --> SUP[Supervisor ou Router]
 
     SUP --> AR[Agent Runtime]
 
@@ -4522,9 +4537,9 @@ flowchart TD
 
     MAP --> MCP[MCP Server]
 
-    MCP --> TOOL[Real tool: consultar_fatura, consultar_pagamentos...]
+    MCP --> TOOL[Tool real: consultar_fatura, consultar_pagamentos...]
 
-    TOOL --> RES[Tool result]
+    TOOL --> RES[Resultado da ferramenta]
 
     RES --> AR
     AR --> LG
@@ -4533,42 +4548,42 @@ flowchart TD
     F --> U
 ```
 
-The main point is:
+O ponto principal é:
 
 ```text
-BusinessContext is not the tool.
-BusinessContext is not the MCP.
-BusinessContext is the internal contract that carries the business identifiers.
+BusinessContext não é a tool.
+BusinessContext não é o MCP.
+BusinessContext é o contrato interno que carrega os identificadores de negócio.
 ```
 
 ---
 
-### 14.3.5. Concrete example: Accounts
+### 14.3.5. Exemplo concreto: Contas
 
-Imagine that the frontend sends this request:
+Imagine que o frontend envie esta requisição:
 
 ```json
 {
-    "channel": "web",
-    "message": "I want to check my invoice",
-    "agent": "telecom_contas",
-    "msisdn": "11999999999",
-    "invoice_id": "3000131180",
-    "ura_call_id": "301953872",
-    "use_mock": true
+  "channel": "web",
+  "message": "Quero consultar minha fatura",
+  "agent": "telecom_contas",
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872",
+  "use_mock": true
 }
 ```
 
-These names are specific to the TIM channel or domain:
+Esses nomes são específicos do canal ou do domínio TIM:
 
-- `msisdn`: customer's line number;
-- `invoice_id`: invoice identifier;
-- `ura_call_id`: identifier of the call/interaction in the IVR;
-- `use_mock`: mock or real execution indicator.
+- `msisdn`: número da linha do cliente;
+- `invoice_id`: identificador da fatura;
+- `ura_call_id`: identificador da chamada/interação na URA;
+- `use_mock`: indicador de execução mock ou real.
 
-The framework should not require all agents to know these names directly.
+O framework não deve obrigar todos os agentes a conhecerem esses nomes diretamente.
 
-Therefore, the request is standardized for a `BusinessContext`:
+Por isso, a requisição é normalizada para um `BusinessContext`:
 
 ```python
 BusinessContext(
@@ -4588,30 +4603,30 @@ BusinessContext(
 
 ---
 
-### 14.3.6. Main fields of the BusinessContext
+### 14.3.6. Campos principais do BusinessContext
 
-| Field | Meaning | Example Accounts |
+| Campo | Significado | Exemplo Contas |
 |---|---|---|
-| `customer_key` | Primary customer identifier | `11999999999` |
-| `contract_key` | Contract, invoice, plan, order or business relationship | `3000131180` |
-| `interaction_key` | Source protocol, call, message or interaction | `301953872` |
-| `account_key` | Financial account, grouping account or billing account | `None` |
-| `resource_key` | Specific technical resource, product, service or asset | `None` |
-| `session_key` | Omnichannel conversational session | `default:telecom_accounts:abc-123` |
-| `metadata` | Non-standard extra information | `channel`, `use_mock`, `frontend` |
+| `customer_key` | Identificador principal do cliente | `11999999999` |
+| `contract_key` | Contrato, fatura, plano, pedido ou vínculo de negócio | `3000131180` |
+| `interaction_key` | Protocolo, chamada, mensagem ou interação de origem | `301953872` |
+| `account_key` | Conta financeira, conta agrupadora ou billing account | `None` |
+| `resource_key` | Recurso técnico, produto, serviço ou asset específico | `None` |
+| `session_key` | Sessão conversacional omnichannel | `default:telecom_contas:abc-123` |
+| `metadata` | Informações extras não padronizadas | `channel`, `use_mock`, `frontend` |
 
 ---
 
-### 14.3.7. Parameter normalization
+### 14.3.7. Normalização dos parâmetros
 
-Normalization is the step that identifies the received parameters and converts them to the framework's canonical model.
+A normalização é a etapa que identifica os parâmetros recebidos e converte para o modelo canônico do framework.
 
 ```mermaid
 flowchart LR
 
-    A[Frontend Request] --> B[Extract raw parameters]
+    A[Request do Frontend] --> B[Extrai parâmetros brutos]
 
-    B --> C{Parameter known?}
+    B --> C{Parâmetro conhecido?}
 
     C -->|msisdn| D[customer_key]
     C -->|cpf/cnpj/customer_id| D
@@ -4632,7 +4647,7 @@ flowchart LR
     H --> I[AgentState / Workflow State]
 ```
 
-Example of possible aliases:
+Exemplo de aliases possíveis:
 
 ```text
 msisdn         → customer_key
@@ -4655,19 +4670,20 @@ session_id     → session_key
 
 ---
 
-### 14.3.8. BusinessContext entry in LangGraph State
+### 14.3.8. Entrada do BusinessContext no LangGraph State
 
-Once created, the `BusinessContext` enters the conversational state of the workflow.
+Depois de criado, o `BusinessContext` entra no estado conversacional do workflow.
 
-Conceptual example:
+Exemplo conceitual:
 
 ```python
 state = {
     "messages": [
         {
-        "role": "user",
-        "content": "I want to check my bill"
-        }],
+            "role": "user",
+            "content": "Quero consultar minha fatura"
+        }
+    ],
     "business_context": {
         "customer_key": "11999999999",
         "contract_key": "3000131180",
@@ -4681,139 +4697,139 @@ state = {
 }
 ```
 
-From that moment on, any LangGraph node can access the context:
+A partir desse momento, qualquer nó do LangGraph pode acessar o contexto:
 
 ```python
-state[ "business_context"]["customer_key"]
-state[ "business_context"]["contract_key"]
-state[ "business_context"]["interaction_key"]
+state["business_context"]["customer_key"]
+state["business_context"]["contract_key"]
+state["business_context"]["interaction_key"]
 ```
 
-However, in a cleaner architecture, the agent does not need to directly manipulate these fields. Ideally, the `Agent Runtime`, the `MCP Tool Router`, and the `Parameter Mapper` should do this.
+Porém, em uma arquitetura mais limpa, o agente não precisa manipular diretamente esses campos. O ideal é que o `Agent Runtime`, o `MCP Tool Router` e o `Parameter Mapper` façam essa passagem.
 
 ---
 
-### 14.3.9. Role of the Agent Runtime
+### 14.3.9. Papel do Agent Runtime
 
-The `Agent Runtime` is the layer that executes the agent within the framework.
+O `Agent Runtime` é a camada que executa o agente dentro do framework.
 
-It receives:
+Ele recebe:
 
-- conversation messages;
-- agent identity;
-- session status;
-- memory;
+- mensagens da conversa;
+- identidade do agente;
+- estado da sessão;
+- memória;
 - `BusinessContext`;
-- guardrail, judge, and observability settings.
+- configurações de guardrails, judges e observabilidade.
 
-Conceptual example:
+Exemplo conceitual:
 
 ```python
 agent_runtime.execute(
-    messages=state[ "messages"],
-    business_context=state[ "business_context"],
-    session_id=state[ "session_id"]
+    messages=state["messages"],
+    business_context=state["business_context"],
+    session_id=state["session_id"]
 )
 ```
 
-During execution, the agent may decide to call a tool.
+Durante a execução, o agente pode decidir chamar uma ferramenta.
 
-Example:
+Exemplo:
 
 ```json
 {
-    "tool": "consultar_fatura",
-    "arguments": {
-      "competencia": "atual"
-    }
+  "tool": "consultar_fatura",
+  "arguments": {
+    "competencia": "atual"
+  }
 }
 ```
 
-But the tool usually needs business data, such as customer, contract, or session.
+Mas a ferramenta normalmente precisa de dados de negócio, como cliente, contrato ou sessão.
 
-The runtime or tool router complements the arguments using `BusinessContext`:
+O runtime ou o tool router complementa os argumentos usando o `BusinessContext`:
 
 ```json
 {
-    "tool": "consultar_fatura",
-    "arguments": {
-        "customer_key": "11999999999",
-        "contract_key": "3000131180",
-        "interaction_key": "301953872",
-        "session_key": "default:telecom_contas:abc-123",
-        "competencia": "atual"
-    }
+  "tool": "consultar_fatura",
+  "arguments": {
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "session_key": "default:telecom_contas:abc-123",
+    "competencia": "atual"
+  }
 }
 ```
 
 ---
 
-### 14.3.10. Role of the MCP Tool Router
+### 14.3.10. Papel do MCP Tool Router
 
-The `MCP Tool Router` is the layer that decides which MCP Server the call should be routed to.
+O `MCP Tool Router` é a camada que decide para qual MCP Server a chamada deve ser encaminhada.
 
-Example:
+Exemplo:
 
 ```text
-consult_invoice        → telecom MCP Server
-consult_payments    → telecom MCP Server
-consult_order        → retail MCP Server
-request_change         → retail MCP Server
+consultar_fatura        → telecom MCP Server
+consultar_pagamentos    → telecom MCP Server
+consultar_pedido        → retail MCP Server
+solicitar_troca         → retail MCP Server
 ```
 
-Simplified flow:
+Fluxo simplificado:
 
 ```mermaid
 flowchart TD
 
-    A[Agent Runtime] --> B[Tool call request]
+    A[Agent Runtime] --> B[Pedido de chamada de tool]
 
-    B --> C{Which tool?}
+    B --> C{Qual tool?}
 
     C -->|consultar_fatura| D[Telecom MCP Server]
     C -->|consultar_pagamentos| D
     C -->|consultar_pedido| E[Retail MCP Server]
     C -->|solicitar_troca| E
 
-    D --> F[Runs telecom tool]
-    E --> G[Runs retail tool]
+    D --> F[Executa tool de telecom]
+    E --> G[Executa tool de retail]
 ```
 
-Before calling the MCP Server, the router needs to ensure that the arguments are in the format expected by the tool.
+Antes de chamar o MCP Server, o router precisa garantir que os argumentos estejam no formato esperado pela tool.
 
-That's where the `Parameter Mapper` comes in.
+É aí que entra o `Parameter Mapper`.
 
 ---
 
-### 14.3.11. Role of the MCP Parameter Mapper
+### 14.3.11. Papel do MCP Parameter Mapper
 
-The MCP Server may not expect the internal names of the framework.
+O MCP Server pode não esperar os nomes internos do framework.
 
-The framework uses:
-
-```json
-{
-    "customer_key": "11999999999",
-    "contract_key": "3000131180",
-    "interaction_key": "301953872",
-    "session_key": "default:telecom_contas:abc-123"
-}
-```
-
-But the telecom MCP Server can wait for:
+O framework usa:
 
 ```json
 {
-    "msisdn": "11999999999",
-    "invoice_id": "3000131180",
-    "ura_call_id": "301953872",
-    "session_id": "default:telecom_contas:abc-123"
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872",
+  "session_key": "default:telecom_contas:abc-123"
 }
 ```
 
-That's why there is mapping.
+Mas o MCP Server de telecom pode esperar:
 
-Configuration example:
+```json
+{
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872",
+  "session_id": "default:telecom_contas:abc-123"
+}
+```
+
+Por isso existe o mapeamento.
+
+Exemplo de configuração:
 
 ```yaml
 mcp_parameter_mapping:
@@ -4843,10 +4859,10 @@ mcp_parameter_mapping:
         session_key: session_id
 ```
 
-This YAML should be interpreted as follows:
+Esse YAML deve ser interpretado da seguinte forma:
 
 ```text
-Internal framework field  →  Field expected by the tool
+Campo interno do framework  →  Campo esperado pela tool
 customer_key                →  msisdn
 contract_key                →  invoice_id
 interaction_key             →  ura_call_id
@@ -4855,7 +4871,7 @@ session_key                 →  session_id
 
 ---
 
-### 14.3.12. Illustration of mapping for a tool
+### 14.3.12. Ilustração do mapeamento para uma tool
 
 ```mermaid
 flowchart LR
@@ -4878,168 +4894,169 @@ flowchart LR
 
 ---
 
-### 14.3.13. Complete flow with sample data
+### 14.3.13. Fluxo completo com exemplo de dados
 
 ```mermaid
 sequenceDiagram
-participant User as User
-participant FE as Frontend
-participant GW as Channel Gateway
-participant ID as Identity Resolver
-participant BC as BusinessContext
-participant LG as LangGraph
-participant AG as BillingAgent
-participant TR as MCP Tool Router
-participant MP as Parameter Mapper
-participant MCP as Telecom MCP Server
-participant Tool as consultar_fatura
+    participant User as Usuário
+    participant FE as Frontend
+    participant GW as Channel Gateway
+    participant ID as Identity Resolver
+    participant BC as BusinessContext
+    participant LG as LangGraph
+    participant AG as BillingAgent
+    participant TR as MCP Tool Router
+    participant MP as Parameter Mapper
+    participant MCP as Telecom MCP Server
+    participant Tool as consultar_fatura
 
-    User->>FE: I want to check my invoice
+    User->>FE: Quero consultar minha fatura
     FE->>GW: message + msisdn + invoice_id + ura_call_id
-    GW->>ID: normalize identity
+    GW->>ID: normalizar identidade
     ID->>BC: customer_key, contract_key, interaction_key
-    BC->>LG: state with business_context
-    LG->>AG: execute billing_agent
-    AG->>TR: call consultar_fatura
-    TR->>MP: apply tool mapping
+    BC->>LG: estado com business_context
+    LG->>AG: executa billing_agent
+    AG->>TR: chamar consultar_fatura
+    TR->>MP: aplicar mapeamento da tool
     MP->>MCP: msisdn, invoice_id, ura_call_id
-    MCP->>Tool: execute consultar_fatura
-    Tool-->>MCP: invoice data
-    MCP-->>TR: response
-    TR-->>AG: tool result
-    AG-->>LG: final response
-    LG-->>GW: agent message
-    GW-->>FE: SSE / response
-    FE-->>User: display response
+    MCP->>Tool: executar consultar_fatura
+    Tool-->>MCP: dados da fatura
+    MCP-->>TR: resposta
+    TR-->>AG: resultado da tool
+    AG-->>LG: resposta final
+    LG-->>GW: mensagem do agente
+    GW-->>FE: SSE / resposta
+    FE-->>User: exibe resposta
 ```
 
 ---
 
-### 14.3.14. Comparison between external, internal and tool names
+### 14.3.14. Comparação entre nomes externos, internos e nomes da tool
 
-| Layer | Example | Responsibility |
+| Camada | Exemplo | Responsabilidade |
 |---|---|---|
-| Frontend / Channel | `msisdn`, `invoice_id`, `ura_call_id` | Capture data coming from the screen, IVR, WhatsApp or Web |
-| Framework | `customer_key`, `contract_key`, `interaction_key` | Standardize the business context |
-| LangGraph State | `business_context` | Transport the context during the workflow |
-| Agent Runtime | uses `business_context` | Pass context to agent and tool router |
-| MCP Parameter Mapper | `customer_key -> msisdn` | Translate internal names to names expected by the MCP |
-| MCP Server | `msisdn`, `invoice_id` | Run real or mock tool |
-| Tool | `consult_invoice(msisdn, invoice_id, ...)` | Search business data |
+| Frontend / Canal | `msisdn`, `invoice_id`, `ura_call_id` | Capturar dados vindos da tela, URA, WhatsApp ou Web |
+| Framework | `customer_key`, `contract_key`, `interaction_key` | Padronizar o contexto de negócio |
+| LangGraph State | `business_context` | Transportar o contexto durante o workflow |
+| Agent Runtime | usa `business_context` | Passar contexto para agente e tool router |
+| MCP Parameter Mapper | `customer_key -> msisdn` | Traduzir nomes internos para nomes esperados pelo MCP |
+| MCP Server | `msisdn`, `invoice_id` | Executar ferramenta real ou mock |
+| Tool | `consultar_fatura(msisdn, invoice_id, ...)` | Buscar dados de negócio |
 
 ---
 
-### 14.3.15. Example of end-to-end transformation
+### 14.3.15. Exemplo de transformação ponta a ponta
 
-#### 14.3.15.1. Channel input
+#### 14.3.15.1. Entrada do canal
 
 ```json
 {
-    "channel": "web",
-    "session_id": "default:telecom_contas:abc-123",
-    "message": "I want to check my invoice",
-    "msisdn": "11999999999",
-    "invoice_id": "3000131180",
-    "ura_call_id": "301953872",
-    "use_mock": true
+  "channel": "web",
+  "session_id": "default:telecom_contas:abc-123",
+  "message": "Quero consultar minha fatura",
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "ura_call_id": "301953872",
+  "use_mock": true
 }
 ```
 
-#### 14.3.15.2. BusinessContext generated
+#### 14.3.15.2. BusinessContext gerado
 
 ```json
+{
+  "customer_key": "11999999999",
+  "contract_key": "3000131180",
+  "interaction_key": "301953872",
+  "account_key": null,
+  "resource_key": null,
+  "session_key": "default:telecom_contas:abc-123",
+  "metadata": {
+    "channel": "web",
+    "use_mock": true
+  }
+}
+```
+
+#### 14.3.15.3. Estado enviado ao LangGraph
+
+```json
+{
+  "messages": [
     {
+      "role": "user",
+      "content": "Quero consultar minha fatura"
+    }
+  ],
+  "business_context": {
     "customer_key": "11999999999",
     "contract_key": "3000131180",
     "interaction_key": "301953872",
-    "account_key": null,
-    "resource_key": null,
     "session_key": "default:telecom_contas:abc-123",
     "metadata": {
-        "channel": "web",
-        "use_mock": true
+      "channel": "web",
+      "use_mock": true
     }
+  }
 }
 ```
 
-#### 14.3.15.3. State sent to LangGraph
-
-```json
-    {
-    "messages": [
-        {
-            "role": "user",
-            "content": "I want to check my invoice"
-        }],
-    "business_context": {
-        "customer_key": "11999999999",
-        "contract_key": "3000131180",
-        "interaction_key": "301953872",
-        "session_key": "default:telecom_contas:abc-123",
-        "metadata": {
-            "channel": "web",
-            "use_mock": true
-        }
-    }
-}
-```
-
-#### 14.3.15.4. Tool selected by the agent
+#### 14.3.15.4. Tool selecionada pelo agente
 
 ```json
 {
-    "tool": "consultar_fatura",
-    "arguments": {
-      "competencia": "atual"
-    }
+  "tool": "consultar_fatura",
+  "arguments": {
+    "competencia": "atual"
+  }
 }
 ```
 
-#### 14.3.15.5. Arguments enriched by the framework
+#### 14.3.15.5. Argumentos enriquecidos pelo framework
 
 ```json
 {
-    "tool": "consultar_fatura",
-    "arguments": {
-        "customer_key": "11999999999",
-        "contract_key": "3000131180",
-        "interaction_key": "301953872",
-        "session_key": "default:telecom_contas:abc-123",
-        "competencia": "atual"
-    }
+  "tool": "consultar_fatura",
+  "arguments": {
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "session_key": "default:telecom_contas:abc-123",
+    "competencia": "atual"
+  }
 }
 ```
 
-#### 14.3.15.6. Final arguments after the MCP Parameter Mapper
+#### 14.3.15.6. Argumentos finais após o MCP Parameter Mapper
 
 ```json
 {
-    "tool": "consultar_fatura",
-    "arguments": {
-        "msisdn": "11999999999",
-        "invoice_id": "3000131180",
-        "ura_call_id": "301953872",
-        "session_id": "default:telecom_contas:abc-123",
-        "competencia": "atual",
-        "use_mock": true
-    }
+  "tool": "consultar_fatura",
+  "arguments": {
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872",
+    "session_id": "default:telecom_contas:abc-123",
+    "competencia": "atual",
+    "use_mock": true
+  }
 }
 ```
 
 ---
 
-### 14.3.16. Summary design
+### 14.3.16. Desenho resumido
 
 ```text
-CHANNEL INPUT
+ENTRADA DO CANAL
 ────────────────────────────────────────
 msisdn=11999999999
 invoice_id=3000131180
 ura_call_id=301953872
-message="I want to check my invoice"
+message="Quero consultar minha fatura"
 
 
-FRAMEWORK NORMALIZATION
+NORMALIZAÇÃO DO FRAMEWORK
 ────────────────────────────────────────
 msisdn       ───────► customer_key
 invoice_id  ───────► contract_key
@@ -5049,22 +5066,22 @@ ura_call_id ───────► interaction_key
 BUSINESS CONTEXT
 ────────────────────────────────────────
 {
-customer_key: "11999999999",
-contract_key: "3000131180",
-interaction_key: "301953872",
-session_key: "default:telecom_contas:abc"
+  customer_key: "11999999999",
+  contract_key: "3000131180",
+  interaction_key: "301953872",
+  session_key: "default:telecom_contas:abc"
 }
 
 
 LANGGRAPH STATE
 ────────────────────────────────────────
 {
-messages:[...],
-business_context: {...}
+  messages: [...],
+  business_context: {...}
 }
 
 
-AGENT DECIDES TOOL
+AGENTE DECIDE TOOL
 ────────────────────────────────────────
 consultar_fatura
 
@@ -5077,36 +5094,37 @@ interaction_key ───────► ura_call_id
 session_key     ───────► session_id
 
 
-FINAL CALL TO MCP SERVER
+CHAMADA FINAL AO MCP SERVER
 ────────────────────────────────────────
 {
-"tool": "consultar_fatura",
-"arguments": {
-"msisdn": "11999999999",
-"invoice_id": "3000131180",
-"ura_call_id": "301953872",
-"session_id": "default:telecom_contas:abc",
-"use_mock": true
-}
+  "tool": "consultar_fatura",
+  "arguments": {
+    "msisdn": "11999999999",
+    "invoice_id": "3000131180",
+    "ura_call_id": "301953872",
+    "session_id": "default:telecom_contas:abc",
+    "use_mock": true
+  }
 }
 ```
 
 ---
 
-### 14.3.17. Why this is important for the framework
+### 14.3.17. Por que isso é importante para o framework
 
-`BusinessContext` allows the framework to be reusable for multiple domains.
+O `BusinessContext` permite que o framework seja reutilizável para vários domínios.
 
-Without it, an Accounts agent could look like this:
+Sem ele, um agente de Contas poderia ficar assim:
 
 ```python
-msisdn = request.query_params[ "msisdn"]
-invoice_id = request.query_params[ "invoice_id"]
-ura_call_id = request.query_params[ "ura_call_id"]```
+msisdn = request.query_params["msisdn"]
+invoice_id = request.query_params["invoice_id"]
+ura_call_id = request.query_params["ura_call_id"]
+```
 
-This couples the agent directly to the frontend, the channel, and the TIM domain.
+Isso acopla o agente diretamente ao frontend, ao canal e ao domínio TIM.
 
-With `BusinessContext`, the agent works with a standardized contract:
+Com `BusinessContext`, o agente trabalha com um contrato padronizado:
 
 ```python
 customer = business_context.customer_key
@@ -5114,21 +5132,21 @@ contract = business_context.contract_key
 interaction = business_context.interaction_key
 ```
 
-And the specific detail of each tool is isolated in the mapper.
+E o detalhe específico de cada tool fica isolado no mapper.
 
 ---
 
-### 14.3.18. Reuse in different domains
+### 14.3.18. Reutilização em diferentes domínios
 
-The same model can work for multiple domains:
+O mesmo modelo pode funcionar para vários domínios:
 
 ```text
-Accounts:
+Contas:
 customer_key -> msisdn
 contract_key -> invoice_id
 interaction_key -> ura_call_id
 
-Bank:
+Banco:
 customer_key -> cpf
 contract_key -> account_id
 interaction_key -> protocol
@@ -5138,172 +5156,172 @@ customer_key -> customer_id
 contract_key -> order_id
 interaction_key -> ticket_id
 
-Health:
+Saúde:
 customer_key -> patient_id
 contract_key -> appointment_id
 interaction_key -> protocol
 ```
 
-The agent doesn't need to change.
+O agente não precisa mudar.
 
-What changes is the mapping.
+O que muda é o mapeamento.
 
 ---
 
-### 14.3.19. Where each responsibility should be
+### 14.3.19. Onde cada responsabilidade deveria ficar
 
-| Responsibility | Suggested layer |
+| Responsabilidade | Camada sugerida |
 |---|---|
-| Receive channel parameters | Frontend / Channel Gateway |
-| Identify aliases such as `msisdn`, `cpf`, `invoice_id` | Identity Resolver / Business Context Builder |
-| Create the canonical model | Business Context Builder |
-| Save context in session | Session Repository |
-| Transport context during the workflow | LangGraph State |
-| Decide which agent executes | Supervisor / Router |
-| Run the agent | Agent Runtime |
-| Decide which MCP Server serves the tool | MCP Tool Router |
-| Convert internal names to tool names | MCP Parameter Mapper |
-| Run real or mock query | MCP Server / Tool |
+| Receber parâmetros do canal | Frontend / Channel Gateway |
+| Identificar aliases como `msisdn`, `cpf`, `invoice_id` | Identity Resolver / BusinessContext Builder |
+| Criar o modelo canônico | BusinessContext Builder |
+| Guardar contexto na sessão | Session Repository |
+| Transportar contexto durante o workflow | LangGraph State |
+| Decidir qual agente executa | Supervisor / Router |
+| Executar o agente | Agent Runtime |
+| Decidir qual MCP Server atende a tool | MCP Tool Router |
+| Converter nomes internos para nomes da tool | MCP Parameter Mapper |
+| Executar consulta real ou mock | MCP Server / Tool |
 
 ---
 
-### 14.3.20. Simplified mental flow
+### 14.3.20. Fluxo mental simplificado
 
 ```text
-1. Channel receives data with various names
+1. Canal recebe dados com nomes variados
    msisdn, cpf, invoice_id, protocol...
 
-2. Framework converts everything to canonical names
+2. Framework converte tudo para nomes canônicos
    customer_key, contract_key, interaction_key...
 
-3. LangGraph loads this into the state
-   business_context within the AgentState
+3. LangGraph carrega isso no state
+   business_context dentro do AgentState
 
-4. Agent decides which tool to call
+4. Agente decide qual tool chamar
    consultar_fatura
 
-5. Tool Router gets the BusinessContext
+5. Tool Router pega o BusinessContext
    customer_key=11999999999
 
-6. Parameter Mapper translates to MCP
+6. Parameter Mapper traduz para o MCP
    customer_key -> msisdn
 
-7. MCP Server executes
+7. MCP Server executa
    consultar_fatura(msisdn="11999999999")
-   ```
+```
 
 ---
 
-### 14.3.21. Final summary
+### 14.3.21. Resumo final
 
-`BusinessContext` is the framework's business identity adapter.
+O `BusinessContext` é o adaptador de identidade de negócio do framework.
 
-It takes specific parameters from the channel or domain, transforms them into a standardized internal model, and then allows the `MCP Parameter Mapper` to convert that internal model to the names expected by each real tool.
+Ele pega parâmetros específicos do canal ou domínio, transforma em um modelo interno padronizado e depois permite que o `MCP Parameter Mapper` converta esse modelo interno para os nomes esperados por cada tool real.
 
-The complete chain is:
+A cadeia completa é:
 
 ```text
-Channel parameters
-↓
-Canonical BusinessContext
-↓
+Parâmetros do canal
+    ↓
+BusinessContext canônico
+    ↓
 LangGraph State
-↓
+    ↓
 Agent Runtime
-↓
+    ↓
 MCP Tool Router
-↓
+    ↓
 Parameter Mapper
-↓
+    ↓
 MCP Server
-↓
-Real tool
+    ↓
+Tool real
 ```
 
-With this, the framework gains:
+Com isso, o framework ganha:
 
-- standardization;
-- decoupling between channel and agent;
-- reuse in multiple domains;
-- less code duplication;
-- easier maintenance;
-- greater governance over which data arrives in the tools;
-- flexibility to use mock or real tools;
-- compatibility with multiple MCP Servers.
+- padronização;
+- desacoplamento entre canal e agente;
+- reutilização em vários domínios;
+- menor duplicação de código;
+- maior facilidade de manutenção;
+- maior governança sobre quais dados chegam nas tools;
+- flexibilidade para usar tools mock ou reais;
+- compatibilidade com múltiplos MCP Servers.
 
-### 14.4. Relationship between SessionContext and BusinessContext
+### 14.4. Relação entre SessionContext e BusinessContext
 
-When the Agent Gateway is present, it can create or transport session data. This data is important, but it does not replace the business identity.
+Quando o Agent Gateway está presente, ele pode criar ou transportar dados de sessão. Esses dados são importantes, mas não substituem a identidade de negócio.
 
 ```text
-SessionContext responds:
-Who's speaking?
-Through which channel?
-Which global session is active?
-Which backend is responding?
-What was the reason for the last routing decision?
+SessionContext responde:
+  Quem está falando?
+  Por qual canal?
+  Qual sessão global está ativa?
+  Qual backend está atendendo?
+  Qual foi a razão da última decisão de rota?
 
-BusinessContext responds:
-Which customer should be consulted?
-Which contract/invoice/order is under discussion?
-Which protocol/call/interaction identifies the case?
-Which key should be sent to the MCP tool?
+BusinessContext responde:
+  Qual cliente deve ser consultado?
+  Qual contrato/fatura/pedido está em discussão?
+  Qual protocolo/chamado/interação identifica o caso?
+  Qual chave deve ser enviada para a tool MCP?
 ```
 
-Rule of thumb:
+Regra prática:
 
 ```text
-Use session for continuity, traceability, and channel.
-Use business_context to query systems, call MCP, and make a business decision.
-Use tool_arguments when parameters are already explicitly prepared.
+Use session para continuidade, rastreabilidade e canal.
+Use business_context para consultar sistemas, chamar MCP e tomar decisão de negócio.
+Use tool_arguments quando parâmetros já vierem explicitamente preparados.
 ```
 
-Example of a common error:
+Exemplo de erro comum:
 
 ```text
-Using session.user_id as customer_key without validating identity.yaml.
+Usar session.user_id como customer_key sem validar identity.yaml.
 ```
 
-The correct thing to do is to let `IdentityResolver` transform `user_id`, `cpf`, `msisdn`, `customer_id` or another identifier into a canonical key such as `customer_key`.
+O correto é deixar o `IdentityResolver` transformar `user_id`, `cpf`, `msisdn`, `customer_id` ou outro identificador em uma chave canônica como `customer_key`.
 
 ---
 
-## 15. Implementing or connecting an MCP Server
+## 15. Implementando ou conectando um MCP Server
 
-### 15.1. Before the code: what is the role of the MCP Server?
+### 15.1. Antes do código: qual é o papel do MCP Server?
 
-The MCP Server is where the integration with external systems or domain mocks is located. It allows the agent to use a tool without knowing the technical implementation.
+O MCP Server é onde fica a integração com sistemas externos ou mocks de domínio. Ele permite que o agente use uma tool sem conhecer implementação técnica.
 
-The backend knows how to call:
+O backend sabe chamar:
 
 ```text
-consult_financial_security(customer_id, contract_id)
+consultar_titulo_financeiro(customer_id, contract_id)
 ```
 
-But it doesn't know, nor should it know, if this query uses:
+Mas não sabe, nem deveria saber, se essa consulta usa:
 
 ```text
 REST
 SOAP
-Oracle database
-mock file
-legacy service
-queue
-internal system
+banco Oracle
+arquivo mock
+serviço legado
+fila
+sistema interno
 ```
 
-### 15.2. Conceptual contract for tools
+### 15.2. Contrato conceitual das tools
 
-Conceptual example:
+Exemplo conceitual:
 
 ```python
 async def consultar_titulo_financeiro(customer_id: str, contract_id: str, session_id: str | None = None):
     return {
         "customer_id": customer_id,
         "contract_id": contract_id,
-        "status": "OPEN",
-        "amount": 129.90,
-        "due date": "2026-06-20",
+        "status": "ABERTO",
+        "valor": 129.90,
+        "vencimento": "2026-06-20",
     }
 
 
@@ -5311,164 +5329,121 @@ async def consultar_pagamentos_financeiro(customer_id: str, session_id: str | No
     return {
         "customer_id": customer_id,
         "pagamentos": [
-            {"data": "2026-06-01", "valor": 129.90, "status": "COMPENSADO"}],
-    }
-```
-
-### 15.3. Criteria for mock versus real
-
-Use mock when:
-
-```text
-the real system is not available
-you are testing routing and contract
-you want to validate frontend/backend without relying on VPN
-you want to set up deterministic automated tests
-```
-
-Use real integration when:
-
-```text
-the contract has already been validated
-the parameters are correct
-the timeout and fallback have been defined
-there is observability for success and failure
-there is secure data for testing
-```
-
-For development, you can use `use_mock: true` in `mcp_parameter_mapping.yaml` or implement a local MCP Server with simulated responses.
-
-We will create the two services (`consultar_titulo_financeiro` and `consultar_pagamentos_financeiro`) so they can run on the example (mock) MCP Server provided in this project.
-
-Update the file:
-
-```text
-/mcp_servers/telecom_mcp_server/main.py
-```
-
-Add the following entries to `TOOLS`:
-
-```python
-"consultar_titulo_financeiro": {
-    "description": "Retrieve a financial invoice/title by customer and contract.",
-    "input_schema": {
-        "customer_id": "string",
-        "contract_id": "string",
-        "session_id": "string"
-    },
-},
-"consultar_pagamentos_financeiro": {
-    "description": "Retrieve financial payments for a customer.",
-    "input_schema": {
-        "customer_id": "string",
-        "session_id": "string"
-    },
-}
-```
-
-The resulting `TOOLS` declaration should look like this:
-
-```python
-TOOLS = {
-    "consultar_fatura": {
-        "description": "Retrieve invoice summary data by msisdn/invoice_id.",
-        "input_schema": {"msisdn": "string", "invoice_id": "string"},
-    },
-    "consultar_pagamentos": {
-        "description": "Retrieve the customer's payment history.",
-        "input_schema": {"msisdn": "string"},
-    },
-    "consultar_plano": {
-        "description": "Retrieve active plan information and commercial attributes.",
-        "input_schema": {"msisdn": "string", "asset_id": "string"},
-    },
-    "listar_servicos": {
-        "description": "List active services and VAS add-ons.",
-        "input_schema": {"msisdn": "string"},
-    },
-    "consultar_titulo_financeiro": {
-        "description": "Retrieve a financial invoice/title by customer and contract.",
-        "input_schema": {
-            "customer_id": "string",
-            "contract_id": "string",
-            "session_id": "string"
-        },
-    },
-    "consultar_pagamentos_financeiro": {
-        "description": "Retrieve financial payments for a customer.",
-        "input_schema": {
-            "customer_id": "string",
-            "session_id": "string"
-        },
-    }
-}
-```
-
-Next, update the `call_tool()` function and add the mock implementations:
-
-```python
-elif name == "consultar_titulo_financeiro":
-    result = {
-        "customer_id": args.get("customer_id") or "123456",
-        "contract_id": args.get("contract_id") or "3000131180",
-        "status": "OPEN",
-        "amount": 129.90,
-        "due_date": "2026-06-20",
-    }
-
-elif name == "consultar_pagamentos_financeiro":
-    result = {
-        "customer_id": args.get("customer_id") or "123456",
-        "payments": [
-            {
-                "date": "2026-06-01",
-                "amount": 129.90,
-                "status": "SETTLED"
-            }
+            {"data": "2026-06-01", "valor": 129.90, "status": "COMPENSADO"}
         ],
     }
 ```
 
-These mock services are required because the `FinanceiroAgent` included in the tutorial expects these tools to be available through the MCP Tool Router.
+### 15.3. Critério para mock versus real
 
-Without these tool definitions, the agent will attempt to invoke:
-
-```text
-consultar_titulo_financeiro
-consultar_pagamentos_financeiro
-```
-
-and the framework will return:
+Use mock quando:
 
 ```text
-Tool/server not configured
+o sistema real não está disponível
+você está testando roteamento e contrato
+você quer validar frontend/backend sem depender de VPN
+você quer montar testes automatizados determinísticos
 ```
 
-because the MCP catalog does not contain those tool names.
+Use integração real quando:
 
-After this change, the FinanceiroAgent can execute successfully against the mock MCP Server without requiring any integration with external billing or ERP systems.
+```text
+o contrato já foi validado
+os parâmetros estão corretos
+o timeout e fallback foram definidos
+há observabilidade para sucesso e falha
+há dados seguros para teste
+```
+
+Para desenvolvimento, você pode usar `use_mock: true` no `mcp_parameter_mapping.yaml` ou implementar um MCP Server local com respostas simuladas.
+
+Vamos criar os 2 serviços (consultar_titulo_financeiro e consultar_pagamentos_financeiro) para funcionar no MCP Server (mock) de exemplo deste projeto. Altere em /mcp_servers/telecom_mcp_server/main.py.
+
+Inclua esta declaração em TOOLS:
+
+```json
+    "consultar_titulo_financeiro": {
+        "description": "Consulta um título financeiro por cliente e contrato.",
+        "input_schema": {"customer_id": "string", "contract_id": "string", "session_id": "string"},
+    },
+    "consultar_pagamentos_financeiro": {
+        "description": "Consulta pagamentos financeiros por cliente.",
+        "input_schema": {"customer_id": "string", "session_id": "string"},
+    }
+```
+
+Desta forma:
+
+```json
+TOOLS = {
+    "consultar_fatura": {
+        "description": "Consulta dados resumidos de fatura por msisdn/invoice_id.",
+        "input_schema": {"msisdn": "string", "invoice_id": "string"},
+    },
+    "consultar_pagamentos": {
+        "description": "Consulta histórico de pagamentos do cliente.",
+        "input_schema": {"msisdn": "string"},
+    },
+    "consultar_plano": {
+        "description": "Consulta plano ativo e atributos comerciais.",
+        "input_schema": {"msisdn": "string", "asset_id": "string"},
+    },
+    "listar_servicos": {
+        "description": "Lista serviços ativos e adicionais VAS.",
+        "input_schema": {"msisdn": "string"},
+    },
+    "consultar_titulo_financeiro": {
+        "description": "Consulta um título financeiro por cliente e contrato.",
+        "input_schema": {"customer_id": "string", "contract_id": "string", "session_id": "string"},
+    },
+    "consultar_pagamentos_financeiro": {
+        "description": "Consulta pagamentos financeiros por cliente.",
+        "input_schema": {"customer_id": "string", "session_id": "string"},
+    }
+}
+```
+
+E em call_tool() adicione os serviços mock:
+
+```python
+    elif name == "consultar_titulo_financeiro":
+        result = {
+            "customer_id": args.get("customer_id") or "123456",
+            "contract_id": args.get("contract_id") or "3000131180",
+            "status": "ABERTO",
+            "valor": 129.90,
+            "vencimento": "2026-06-20",
+        }
+    elif name == "consultar_pagamentos_financeiro":
+        result = {
+            "customer_id": args.get("customer_id") or "123456",
+            "pagamentos": [
+                {"data": "2026-06-01", "valor": 129.90, "status": "COMPENSADO"}
+            ],
+        }
+```
 
 ---
 
-## 16. IC, NOC and GRL in the new agent
+## 16. IC, NOC e GRL no novo agente
 
-### 16.1. Before the events: why do they exist?
+### 16.1. Antes dos eventos: por que eles existem?
 
-IC, NOC and GRL are not common logs. They exist to track execution in a corporate manner.
+IC, NOC e GRL não são logs comuns. Eles existem para rastrear a execução de forma corporativa.
 
 ```text
-IC  = business event or agent journey
-NOC = operational event, error, unavailability, timeout or degradation
-GRL = governance event, guardrail, blocking, review or sanitization
+IC  = evento de negócio ou jornada do agente
+NOC = evento operacional, erro, indisponibilidade, timeout ou degradação
+GRL = evento de governança, guardrail, bloqueio, revisão ou sanitização
 ```
 
-Use `logger.info()` for simple diagnostics. Use IC/NOC/GRL when the event needs to appear in an audit, observability, or operational analysis.
+Use `logger.info()` para diagnóstico simples. Use IC/NOC/GRL quando o evento precisa aparecer em auditoria, observabilidade ou análise operacional.
 
-### 16.2. IC — business events
+### 16.2. IC — eventos de negócio
 
-Use ICs within the agent to record relevant steps in the journey.
+Use ICs dentro do agente para registrar passos relevantes da jornada.
 
-Example:
+Exemplo:
 
 ```python
 await self._emit_ic(
@@ -5479,7 +5454,7 @@ await self._emit_ic(
 )
 ```
 
-Minimum suggestion per agent:
+Sugestão mínima por agente:
 
 ```text
 IC.<AGENTE>_AGENT_STARTED
@@ -5491,11 +5466,11 @@ IC.<AGENTE>_ACTION_REQUESTED
 IC.<AGENTE>_ACTION_COMPLETED
 ```
 
-### 16.3. NOC — operational events
+### 16.3. NOC — eventos operacionais
 
-NOC should be used for technical health, unavailability, error, timeout, fallback, and degradation.
+NOC deve ser usado para saúde técnica, indisponibilidade, erro, timeout, fallback e degradação.
 
-Example:
+Exemplo:
 
 ```python
 await self.observer.emit_noc(
@@ -5512,7 +5487,7 @@ await self.observer.emit_noc(
 
 ### 16.4. GRL — guardrails
 
-Most GRLs are already issued by the workflow in:
+A maior parte dos GRLs já é emitida pelo workflow em:
 
 ```text
 input_guardrails
@@ -5520,43 +5495,43 @@ output_supervisor
 output_guardrails
 ```
 
-Only implement GRL within the agent when there is a specific domain validation that does not fit within the global guardrails.
+Só implemente GRL dentro do agente quando houver uma validação de domínio específica que não caiba nos guardrails globais.
 
-### 16.5. When not to create a new event
+### 16.5. Quando não criar evento novo
 
-Do not create IC/NOC/GRL for each line of code. Create events for important decisions:
+Não crie IC/NOC/GRL para cada linha de código. Crie eventos para decisões importantes:
 
 ```text
-validated input
-MCP context collected
-business decision made
-external action requested
-external action completed
-technical fallback triggered
-response blocked or revised
-workflow completed
+entrada validada
+contexto MCP coletado
+decisão de negócio tomada
+ação externa solicitada
+ação externa concluída
+fallback técnico acionado
+resposta bloqueada ou revisada
+workflow concluído
 ```
 
 ---
 
-## 17. Build and local execution
+## 17. Build e execução local
 
-At the root of the project:
+Na raiz do projeto:
 
 ```bash
 cd agent_framework_oci
 python -m venv .venv
 ```
 
-### 17.1. Before the commands: what does it mean to upload the backend?
+### 17.1. Antes dos comandos: o que significa subir o backend?
 
-Bringing up the backend means starting the API that receives messages, normalizes the channel, resolves identity, opens a session, executes the workflow, and returns a response.
+Subir o backend significa iniciar a API que recebe mensagens, normaliza canal, resolve identidade, abre sessão, executa o workflow e devolve resposta.
 
-It can be uploaded even without a real MCP, as long as the configuration is in mock or the tools are not required for the test.
+Ele pode subir mesmo sem MCP real, desde que a configuração esteja em mock ou que as tools não sejam obrigatórias para o teste.
 
-### 17.2. Run local backend
+### 17.2. Rodar backend local
 
-Inside `agent_template_backend`:
+Dentro de `agent_template_backend`:
 
 ```bash
 source .venv/bin/activate
@@ -5573,59 +5548,59 @@ Windows PowerShell:
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 17.3. Immediate validations
+### 17.3. Validações imediatas
 
-Check health:
+Verifique saúde:
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-List agents:
+Listar agentes:
 
 ```bash
 curl http://localhost:8000/agents
 ```
 
-List known MCP tools:
+Listar tools MCP conhecidas:
 
 ```bash
 curl http://localhost:8000/debug/mcp/tools
 ```
 
-### 17.4. How to interpret the result
+### 17.4. Como interpretar o resultado
 
 ```text
-/health ok         → API is up.
-/agents lista      → agents.yaml was loaded.
-/debug/mcp/tools   → tools.yaml and mcp_servers.yaml were loaded.
+/health ok         → API subiu.
+/agents lista      → agents.yaml foi carregado.
+/debug/mcp/tools   → tools.yaml e mcp_servers.yaml foram carregados.
 ```
 
-If `/health` works but`/agents` does not list the agent, the problem is probably in `config/agents.yaml`. If `/debug/mcp/tools` does not show the tool, the problem is probably in `tools.yaml` or `mcp_servers.yaml`.
+Se `/health` funciona mas `/agents` não lista o agente, o problema provavelmente está em `config/agents.yaml`. Se `/debug/mcp/tools` não mostra a tool, o problema provavelmente está em `tools.yaml` ou `mcp_servers.yaml`.
 
 ---
 
-## 18. Uploading MCP Servers
+## 18. Subindo MCP Servers
 
-### 18.1. Before the commands: when do I need to upload MCP?
+### 18.1. Antes dos comandos: quando preciso subir MCP?
 
-You need to upload MCP when the chosen intent uses `mcp_tools` and the agent depends on these tools to respond.
+Você precisa subir MCP quando a intent escolhida usa `mcp_tools` e o agente depende dessas tools para responder.
 
-You don't need to upload MCP just to test:
+Não precisa subir MCP para testar apenas:
 
 ```text
 health check
-agent registration
-basic routing
-mock LLM without tools
-simple conversational flow without external query
+registro de agentes
+roteamento básico
+mock LLM sem tools
+fluxo conversacional simples sem consulta externa
 ```
 
-### 18.2. Upload local MCP Server
+### 18.2. Subir MCP Server local
 
-If the MCP Servers are separate Python processes, upload each one on a different port.
+Se os MCP Servers forem processos Python separados, suba cada um em uma porta distinta.
 
-Example:
+Exemplo:
 
 ```bash
 cd ../mcp_servers/financeiro_mcp_server
@@ -5633,45 +5608,45 @@ source .venv/bin/activate
 python -m uvicorn main:app --host 0.0.0.0 --port 8300 --reload
 ```
 
-Then confirm that the endpoint configured in `config/mcp_servers.yaml` is correct:
+Depois confirme que o endpoint configurado em `config/mcp_servers.yaml` está correto:
 
 ```yaml
 servers:
-financeiro:
-endpoint: http://localhost:8300/mcp
+  financeiro:
+    endpoint: http://localhost:8300/mcp
 ```
 
-> **Note:** The**/scripts/ folder** has automated mcp server startup scripts for educational purposes.
-> The **/agent_template_backend folder** has 2 mcp servers configured, one on port 8100 and the other on 8200. These services are ready and configured to run if you want to test the circuit.
-> You can customize it to upload all your mcp servers.
-> Run: **bash ./scripts/run_mcp_servers.sh**
+>**Nota:** A pasta **/scripts/** possui scripts automatizados de inicialização do mcp server para efeitos didáticos.
+> A pasta **/agent_template_backend** possui 2 mcp servers configurados, um na porta 8100 e outro na 8200. Estes serviços estão prontos e configurados para execução caso queira testar o circuito.
+> Você pode customizar para subir todos os seus mcp servers.
+> Execute: **bash ./scripts/run_mcp_servers.sh**
 
-### 18.3. Test tool through the backend
+### 18.3. Testar tool pelo backend
 
-Test through the backend, not directly through the MCP. This way, you validate the complete path:
+Teste pelo backend, não diretamente pelo MCP. Assim você valida o caminho completo:
 
 ```text
-backend → MCP Tool Router → MCP Server → response
+backend → MCP Tool Router → MCP Server → resposta
 ```
 
 ```bash
 curl -X POST http://localhost:8000/debug/mcp/call/consultar_titulo_financeiro \
   -H "Content-Type: application/json" \
   -d '{
-"business_context": {
-"customer_key": "12345",
-"contract_key": "ABC-999",
-"session_key": "sessao-teste"
-},
-"original_context": {
-"session_id": "sessao-teste"
-}
-}'
+    "business_context": {
+      "customer_key": "12345",
+      "contract_key": "ABC-999",
+      "session_key": "sessao-teste"
+    },
+    "original_context": {
+      "session_id": "sessao-teste"
+    }
+  }'
 ```
 
-> **Note:** In the project, there is also a visual interface for testing:
+>**Nota:** No projeto existe também uma interface visual para testar:
 
-### 18.4. Upload Frontend for testing
+### 18.4. Subir Frontend para testes
 
 ```bash
 cd agent_framework_oci
@@ -5679,28 +5654,28 @@ cd agent_frontend
 python -m http.server 5173
 ```
 
-Open http://localhost:5173.
+Abra http://localhost:5173.
 
 
-> **Note:** The frontend is ready to work with the **Agent Gateway**. In the project, see chapters 28 and 28.10 to try it out. Just remember to change the **Backend URL** to **http://localhost:8010** because 8010 is the port where the **Agent Gateway** will be listening.
+>**Nota:** O frontend está preparado para funcionar com o **Agent Gateway**. No projeto, consulte os capítulos 28 e 28.10 para experimentá-lo. Lembre-se apenas de trocar **Backend URL** para **http://localhost:8010** pois 8010 é a porta onde o **Agent Gateway** estará escutando.
 
-### 18.5. How to interpret MCP errors
+### 18.5. Como interpretar erros MCP
 
 ```text
-Tool not found         → tools.yaml or wrong tool name.
-Server not found     → mcp_servers.yaml does not have the mcp_server indicated by the tool.
-Connection refused          → MCP Server is not running or wrong port.
-Required parameter missing → identity.yaml or mcp_parameter_mapping.yaml incorrect.
-Timeout                     → Slow MCP, wrong endpoint, VPN, DNS or real system unavailable.
+Tool não encontrada         → tools.yaml ou nome da tool errado.
+Servidor não encontrado     → mcp_servers.yaml não tem o mcp_server indicado pela tool.
+Connection refused          → MCP Server não está rodando ou porta errada.
+Parâmetro obrigatório ausente → identity.yaml ou mcp_parameter_mapping.yaml incorreto.
+Timeout                     → MCP lento, endpoint errado, VPN, DNS ou sistema real indisponível.
 ```
 
 ---
 
-## 19. Build with Docker
+## 19. Build com Docker
 
-The template Dockerfile expects to copy `agent_framework` and `agent_template_backend`. Therefore, run the build from the parent directory that contains both.
+O Dockerfile do template espera copiar `agent_framework` e `agent_template_backend`. Portanto, rode o build a partir do diretório pai que contém ambos.
 
-Expected structure:
+Estrutura esperada:
 
 ```text
 workspace/
@@ -5712,14 +5687,14 @@ Build:
 
 ```bash
 cd workspace
-docker build -t agent-template-backend:local -f agent_template_backend/Dockerfile.
+docker build -t agent-template-backend:local -f agent_template_backend/Dockerfile .
 ```
 
 Run:
 
 ```bash
 docker run --rm -p 8000:8000 \
---env-file agent_template_backend/.env \
+  --env-file agent_template_backend/.env \
   agent-template-backend:local
 ```
 
@@ -5731,11 +5706,11 @@ curl http://localhost:8000/health
 
 ---
 
-## 20. Suggested Docker Compose
+## 20. Docker Compose sugerido
 
-Create a `docker-compose.yaml` in the parent directory if you want to upload backend, Redis, Langfuse, and MCP Servers together.
+Crie um `docker-compose.yaml` no diretório pai, se quiser subir backend, Redis, Langfuse e MCP Servers juntos.
 
-Simplified example:
+Exemplo simplificado:
 
 ```yaml
 services:
@@ -5763,7 +5738,7 @@ services:
       - "8300:8300"
 ```
 
-When in Docker, use `config/mcp_servers.docker.yaml` and adjust the `.env`:
+Quando estiver em Docker, use `config/mcp_servers.docker.yaml` e ajuste o `.env`:
 
 ```env
 MCP_SERVERS_CONFIG_PATH=./config/mcp_servers.docker.yaml
@@ -5771,93 +5746,93 @@ MCP_SERVERS_CONFIG_PATH=./config/mcp_servers.docker.yaml
 
 ---
 
-## 21. Testing the agent through the Gateway
+## 21. Testando o agente pelo Gateway
 
-### 21.1. Simple test
+### 21.1. Teste simples
 
 ```bash
 curl -X POST http://localhost:8000/gateway/message \
   -H "Content-Type: application/json" \
   -d '{
-"channel": "web",
-"agent_id": "financeiro_agent",
-"tenant_id": "default",
-"payload": {
-"text": "I want to check my payment",
-"session_id": "teste-financeiro-001",
-"user_id": "user-001",
-"customer_id": "12345",
-"contract_id": "ABC-999",
-"message_id": "msg-001"
-}
-}'
+    "channel": "web",
+    "agent_id": "financeiro_agent",
+    "tenant_id": "default",
+    "payload": {
+      "text": "Quero consultar meu pagamento",
+      "session_id": "teste-financeiro-001",
+      "user_id": "user-001",
+      "customer_id": "12345",
+      "contract_id": "ABC-999",
+      "message_id": "msg-001"
+    }
+  }'
 ```
 
-The response must contain metadata such as:
+A resposta deve conter metadados como:
 
 ```json
 {
-    "channel": "web",
-    "session_id": "default:financeiro_agent:teste-financeiro-001",
-    "text": "...",
-    "metadata": {
-        "route": "financeiro_agent",
-        "intent": "financeiro_pagamentos",
-        "mcp_results":[],
-        "business_context": {
-            "customer_key": "12345",
-            "contract_key": "ABC-999"
-        }
+  "channel": "web",
+  "session_id": "default:financeiro_agent:teste-financeiro-001",
+  "text": "...",
+  "metadata": {
+    "route": "financeiro_agent",
+    "intent": "financeiro_pagamentos",
+    "mcp_results": [],
+    "business_context": {
+      "customer_key": "12345",
+      "contract_key": "ABC-999"
     }
+  }
 }
 ```
 
-### 21.2. Routing test without setting `agent_id`
+### 21.2. Teste de roteamento sem fixar `agent_id`
 
 ```bash
 curl -X POST http://localhost:8000/gateway/message \
   -H "Content-Type: application/json" \
   -d '{
-"channel": "web",
-"tenant_id": "default",
-"payload": {
-"text": "My payment has not been downloaded yet",
-"session_id": "teste-router-001",
-"user_id": "user-001",
-"customer_id": "12345",
-"contract_id": "ABC-999"
-}
-}'
+    "channel": "web",
+    "tenant_id": "default",
+    "payload": {
+      "text": "Meu pagamento ainda não foi baixado",
+      "session_id": "teste-router-001",
+      "user_id": "user-001",
+      "customer_id": "12345",
+      "contract_id": "ABC-999"
+    }
+  }'
 ```
 
-### 21.3. SSE test
+### 21.3. Teste de SSE
 
-Send message with SSE:
+Enviar mensagem com SSE:
 
 ```bash
 curl -X POST http://localhost:8000/gateway/message/sse \
   -H "Content-Type: application/json" \
   -d '{
-"channel": "web",
-"agent_id": "financeiro_agent",
-"tenant_id": "default",
-"payload": {
-"text": "I need a duplicate of the payment slip",
-"session_id": "teste-sse-001",
-"user_id": "user-001",
-"customer_id": "12345",
-"contract_id": "ABC-999"
-}
-}'
+    "channel": "web",
+    "agent_id": "financeiro_agent",
+    "tenant_id": "default",
+    "payload": {
+      "text": "Preciso da segunda via do boleto",
+      "session_id": "teste-sse-001",
+      "user_id": "user-001",
+      "customer_id": "12345",
+      "contract_id": "ABC-999"
+    }
+  }'
 ```
 
-Open stream:
+Abrir stream:
 
 ```bash
 curl -N http://localhost:8000/gateway/events/default:financeiro_agent:teste-sse-001
 ```
 
-Expected events:
+Eventos esperados:
 
 ```text
 connected
@@ -5872,36 +5847,36 @@ flow.end
 
 ---
 
-## 22. Testing debug endpoints
+## 22. Testando debug endpoints
 
-### 22.1. Routing
+### 22.1. Roteamento
 
 ```bash
 curl -X POST http://localhost:8000/debug/route \
   -H "Content-Type: application/json" \
   -d '{
-"text": "I want to check my payment",
-"context": {
-"agent_id": "financeiro_agent",
-"tenant_id": "default"
-}
-}'
+    "text": "Quero consultar meu pagamento",
+    "context": {
+      "agent_id": "financeiro_agent",
+      "tenant_id": "default"
+    }
+  }'
 ```
 
-### 22.2. Identity
+### 22.2. Identidade
 
 ```bash
 curl -X POST http://localhost:8000/debug/identity \
   -H "Content-Type: application/json" \
   -d '{
-"session_id": "test-id-001",
-"customer_id": "12345",
-"contract_id": "ABC-999",
-"message_id": "msg-001"
-}'
+    "session_id": "teste-id-001",
+    "customer_id": "12345",
+    "contract_id": "ABC-999",
+    "message_id": "msg-001"
+  }'
 ```
 
-### 22.3. Session messages
+### 22.3. Mensagens da sessão
 
 ```bash
 curl http://localhost:8000/sessions/default:financeiro_agent:teste-financeiro-001/messages
@@ -5913,7 +5888,7 @@ curl http://localhost:8000/sessions/default:financeiro_agent:teste-financeiro-00
 curl http://localhost:8000/sessions/default:financeiro_agent:teste-financeiro-001/checkpoint
 ```
 
-### 22.5. Usage/cost
+### 22.5. Uso/custo
 
 ```bash
 curl http://localhost:8000/debug/usage
@@ -5921,137 +5896,137 @@ curl http://localhost:8000/debug/usage
 
 ---
 
-## 23. Functional validation checklist
+## 23. Checklist de validação funcional
 
-Use this checklist before considering the agent ready.
+Use este checklist antes de considerar o agente pronto.
 
-### 23.1. Configuration
+### 23.1. Configuração
 
-- [ ] `.env` without real versioned credentials.
-  - [ ]Correct `LLM_PROVIDER`.
-- [ ] `ROUTING_MODE` set: `router` or `supervisor`.
-- [ ] `ENABLE_MCP_TOOLS` adjusted as needed.
-- [ ] `MCP_SERVERS_CONFIG_PATH` points to the correct YAML.
-- [ ] `IDENTITY_CONFIG_PATH` points to `config/identity.yaml`.
-- [ ] Local persistence or Autonomous configured.
+- [ ] `.env` sem credenciais reais versionadas.
+- [ ] `LLM_PROVIDER` correto.
+- [ ] `ROUTING_MODE` definido: `router` ou `supervisor`.
+- [ ] `ENABLE_MCP_TOOLS` ajustado conforme necessidade.
+- [ ] `MCP_SERVERS_CONFIG_PATH` aponta para o YAML correto.
+- [ ] `IDENTITY_CONFIG_PATH` aponta para `config/identity.yaml`.
+- [ ] Persistência local ou Autonomous configurada.
 
-### 23.2. Agent
+### 23.2. Agente
 
-- [ ] File created in `app/agents/<agent>.py`.
-- [ ] Class implements `async def run(self, state)`.
-- [ ] Agent inherits `AgentRuntimeMixin`.
-- [ ] Agent uses `get_runtime_context()` or equivalent standard to read `state/context/session/business_context`.
-- [ ] Agent uses `normalize_tools_by_intent()` when it needs a tools fallback by intent.
-- [ ] Agent uses `build_tool_arguments()` or `execute_tools_for_intent()` when aliases/tools policy are needed.
-- [ ] Action tools in `tools.yaml` have `tool_type`, `requires` and, when necessary, `confirmation_required`.
-- [ ] Dev understands that `AgentRuntimeMixin` is shared infrastructure, not a business rule.
-- [ ] Agent uses`_emit_ic()`,`_emit_noc()` or`_emit_grl()` instead of emitting observability in its own format.
-- [ ] Agent uses`_collect_mcp_context()` for simple queries to the tools declared in `routing.yaml`.
-- [ ] Agent uses`_retrieve_rag_context()` when it needs document context.
-- [ ] We use`_invoke_llm_cached()` for LLM calls with caching and telemetry.
-- [ ] Dev understands that `messages` is the conversational contract sent to the LLM, not the persistent memory.
-- [ ] `messages` separates permanent rules in the `system` and request/evidence in the `user`.
-- [ ] `messages` includes only required fields from `session`, `business_context`, MCP, and RAG.
-- [ ] The agent does not send `the complete state`, huge objects, or unnecessary sensitive data to the LLM.
-- [ ] We make it clear in the prompt when MCP/RAG have failed, to avoid a made-up response.
-- [ ] The agent does not call REST, the database, SOAP or an external service directly when this should be behind MCP.
-- [ ] Agent separates `context`, `session`, `business_context`, and `tool_arguments` before making decisions.
-- [ ] The agent uses `business_context` for business decisions and `session` for continuity/traceability.
-- [ ] Specific prompts `apply apply_agent_profile_prompt()`.
-- [ ] Tools are called via`_collect_mcp_context()`.
-- [ ] RAG is called via`_retrieve_rag_context()`, if applicable.
-- [ ] LLM is called via`_invoke_llm_cached()`.
-- [ ] Return contains `answer`, `next_state`, `mcp_results` and, if applicable, `rag`.
+- [ ] Arquivo criado em `app/agents/<agent>.py`.
+- [ ] Classe implementa `async def run(self, state)`.
+- [ ] Agente herda `AgentRuntimeMixin`.
+- [ ] Agente usa `get_runtime_context()` ou padrão equivalente para ler `state/context/session/business_context`.
+- [ ] Agente usa `normalize_tools_by_intent()` quando precisa de fallback de tools por intent.
+- [ ] Agente usa `build_tool_arguments()` ou `execute_tools_for_intent()` quando precisa de aliases/política de tools.
+- [ ] Tools de ação em `tools.yaml` possuem `tool_type`, `requires` e, quando necessário, `confirmation_required`.
+- [ ] Dev entende que `AgentRuntimeMixin` é infraestrutura compartilhada, não regra de negócio.
+- [ ] Agente usa `_emit_ic()`, `_emit_noc()` ou `_emit_grl()` em vez de emitir observabilidade em formato próprio.
+- [ ] Agente usa `_collect_mcp_context()` para consultas simples às tools declaradas em `routing.yaml`.
+- [ ] Agente usa `_retrieve_rag_context()` quando precisa de contexto documental.
+- [ ] Agente usa `_invoke_llm_cached()` para chamada LLM com cache e telemetria.
+- [ ] Dev entende que `messages` é o contrato conversacional enviado ao LLM, não a memória persistente.
+- [ ] `messages` separa regras permanentes no `system` e pedido/evidências no `user`.
+- [ ] `messages` inclui apenas campos necessários de `session`, `business_context`, MCP e RAG.
+- [ ] Agente não envia `state` completo, objetos enormes ou dados sensíveis desnecessários ao LLM.
+- [ ] Agente deixa claro no prompt quando MCP/RAG falharam, para evitar resposta inventada.
+- [ ] Agente não chama REST, banco, SOAP ou serviço externo diretamente quando isso deveria estar atrás de MCP.
+- [ ] Agente separa `context`, `session`, `business_context` e `tool_arguments` antes de tomar decisões.
+- [ ] Agente usa `business_context` para decisões de negócio e `session` para continuidade/rastreabilidade.
+- [ ] Prompts específicos aplicam `apply_agent_profile_prompt()`.
+- [ ] Tools são chamadas via `_collect_mcp_context()`.
+- [ ] RAG é chamado via `_retrieve_rag_context()`, se aplicável.
+- [ ] LLM é chamado via `_invoke_llm_cached()`.
+- [ ] Retorno contém `answer`, `next_state`, `mcp_results` e, se aplicável, `rag`.
 
 ### 23.3. Workflow
 
-- [ ] Agent imported in `agent_graph.py`.
-- [ ] Agent instantiated in `__init__`.
-- [ ] Node added in `StateGraph`.
-- [ ] Route added in `add_conditional_edges`.
-- [ ] Edge created for `output_supervisor`.
-- [ ] Handler added in supervisor mode, if necessary.
+- [ ] Agente importado em `agent_graph.py`.
+- [ ] Agente instanciado no `__init__`.
+- [ ] Nó adicionado no `StateGraph`.
+- [ ] Rota adicionada em `add_conditional_edges`.
+- [ ] Edge criada para `output_supervisor`.
+- [ ] Handler adicionado no modo supervisor, se necessário.
 
-### 23.4. Routing
+### 23.4. Roteamento
 
-- [ ] Intent added in `config/routing.yaml`.
-- [ ] Sufficient keywords.
-- [ ] Consistent examples.
-  - [ ]The intent `agent` matches the name of the workflow node.
-  - [ ]The intent `mcp_tools` exist in `config/tools.yaml`.
+- [ ] Intent adicionada em `config/routing.yaml`.
+- [ ] Keywords suficientes.
+- [ ] Examples coerentes.
+- [ ] `agent` da intent bate com o nome do nó do workflow.
+- [ ] `mcp_tools` da intent existem em `config/tools.yaml`.
 
 ### 23.5. MCP
 
-- [ ] Tool declared in `config/tools.yaml`.
-- [ ] MCP Server declared in `config/mcp_servers.yaml`.
-- [ ] Mapping declared in `config/mcp_parameter_mapping.yaml`.
-- [ ] Tool tested via`/debug/mcp/call/{tool_name}`.
-- [ ] Timeout and fallback defined.
+- [ ] Tool declarada em `config/tools.yaml`.
+- [ ] MCP Server declarado em `config/mcp_servers.yaml`.
+- [ ] Mapeamento declarado em `config/mcp_parameter_mapping.yaml`.
+- [ ] Tool testada via `/debug/mcp/call/{tool_name}`.
+- [ ] Timeout e fallback definidos.
 
-### 23.6. Observability
+### 23.6. Observabilidade
 
-- [ ] Start and end ICs issued.
-- [ ] MCP/RAG collection ICs issued when applicable.
-- [ ] NOCs issued for relevant technical errors.
-- [ ] Global GRLs appear in input/output.
-- [ ] Langfuse or another provider receives traces, if enabled.
+- [ ] ICs de início e fim emitidos.
+- [ ] ICs de coleta MCP/RAG emitidos quando aplicável.
+- [ ] NOCs emitidos em erros técnicos relevantes.
+- [ ] GRLs globais aparecem em input/output.
+- [ ] Langfuse ou outro provider recebe traces, se habilitado.
 
-### 23.7. Tests
+### 23.7. Testes
 
-- [ ] `/health` returns `status=ok`.
-- [ ] `/agents` lists the new agent.
-- [ ] `/debug/route` chooses the correct agent.
-- [ ] `/debug/identity` resolves the expected keys.
-- [ ] `/gateway/message` returns the correct response.
-- [ ] `/gateway/message/sse` publishes events.
-- [ ] `/sessions/{session_id}/messages shows history`.
-- [ ] `/sessions/{session_id}/checkpoint` shows checkpoint.
+- [ ] `/health` retorna `status=ok`.
+- [ ] `/agents` lista o agente novo.
+- [ ] `/debug/route` escolhe o agente correto.
+- [ ] `/debug/identity` resolve as chaves esperadas.
+- [ ] `/gateway/message` retorna resposta correta.
+- [ ] `/gateway/message/sse` publica eventos.
+- [ ] `/sessions/{session_id}/messages` mostra histórico.
+- [ ] `/sessions/{session_id}/checkpoint` mostra checkpoint.
 
 ---
 
-## 24. Best practices for customization
+## 24. Boas práticas de customização
 
-### Do
+### Faça
 
-- Put the business rule in the agent, not in the framework.
-- Use MCP to access external systems.
-- Use `RuntimeContext`, `build_tool_arguments()`, and `execute_tools_for_intent()` before creating duplicate local helpers in the agent.
-- Use `identity.yaml` to standardize business keys.
-- Use `mcp_parameter_mapping.yaml` to adapt parameter names.
-- Use IC for business events.
-- Use NOC for technical failures.
-- Use GRL for security/validation decisions.
-- Set up `messages` with a clear separation between instruction, request, MCP evidence, RAG context, and output format.
-- Keep prompts by agent in `config/agents/<agent_id>/prompt_policy.yaml`.
-- Keep guardrails and judges isolated when the agent has its own rules.
+- Coloque regra de negócio no agente, não no framework.
+- Use MCP para acesso a sistemas externos.
+- Use `RuntimeContext`, `build_tool_arguments()` e `execute_tools_for_intent()` antes de criar helpers locais duplicados no agente.
+- Use `identity.yaml` para normalizar chaves de negócio.
+- Use `mcp_parameter_mapping.yaml` para adaptar nomes de parâmetros.
+- Use IC para eventos de negócio.
+- Use NOC para falhas técnicas.
+- Use GRL para decisões de segurança/validação.
+- Monte `messages` com separação clara entre instrução, pedido, evidência MCP, contexto RAG e formato de saída.
+- Mantenha prompts por agente em `config/agents/<agent_id>/prompt_policy.yaml`.
+- Mantenha guardrails e judges isolados quando o agente tiver regras próprias.
 
-### Avoid
+### Evite
 
-- Creating another workflow outside of `AgentWorkflow` unnecessarily.
-- Calling REST/DB directly inside the agent when the call should be an MCP tool.
-- Creating your own checkpointer.
-- Creating parallel memory outside the framework.
-- Issuing telemetry in a format incompatible with `AgentObserver`.
-- Place an agent-specific rule within the framework.
-- Mix history of different agents in the same session.
-- Send the entire `state` or large dumps of tools/RAG directly within `messages`.
-- Put critical rules only in the `user` prompt when they should be in the `system`.
+- Criar outro workflow fora de `AgentWorkflow` sem necessidade.
+- Chamar REST/DB direto dentro do agente quando a chamada deveria ser tool MCP.
+- Criar checkpointer próprio.
+- Criar memória paralela fora do framework.
+- Emitir telemetria em formato incompatível com `AgentObserver`.
+- Colocar regra específica de um agente dentro do framework.
+- Misturar histórico de agentes diferentes na mesma sessão.
+- Enviar o `state` inteiro ou dumps grandes de tools/RAG diretamente dentro de `messages`.
+- Colocar regras críticas apenas no `user` prompt quando deveriam estar no `system`.
 
 ---
 
 ## 25. Troubleshooting
 
-### 25.1.`/gateway/message` returns wrong route
+### 25.1. `/gateway/message` retorna rota errada
 
-Check:
+Verifique:
 
 ```bash
 curl -X POST http://localhost:8000/debug/route \
   -H "Content-Type: application/json" \
--d '{"text":"your test phrase","context":{"agent_id":"financeiro_agent"}}'
+  -d '{"text":"sua frase de teste","context":{"agent_id":"financeiro_agent"}}'
 ```
 
-Then review:
+Depois revise:
 
 ```text
 config/routing.yaml
@@ -6062,27 +6037,27 @@ ROUTING_MODE
 ENABLE_LLM_ROUTER
 ```
 
-### 25.2. MCP tool is not called
+### 25.2. Tool MCP não é chamada
 
-Check:
+Verifique:
 
 ```text
-The intent in routing.yaml has mcp_tools.
-The tool exists in tools.yaml.
-The MCP Server is in mcp_servers.yaml.
+A intent em routing.yaml possui mcp_tools.
+A tool existe em tools.yaml.
+O MCP Server está em mcp_servers.yaml.
 ENABLE_MCP_TOOLS=true.
-The mapping exists in mcp_parameter_mapping.yaml.
-The identity has the necessary keys.
+O mapeamento existe em mcp_parameter_mapping.yaml.
+A identidade tem as chaves necessárias.
 ```
 
-### 25.3. Tool receives wrong parameter
+### 25.3. Tool recebe parâmetro errado
 
-Review:
+Revise:
 
 ```text
 config/identity.yaml
 config/mcp_parameter_mapping.yaml
-payload sent to /gateway/message
+payload enviado ao /gateway/message
 ```
 
 Use:
@@ -6090,32 +6065,32 @@ Use:
 ```bash
 curl -X POST http://localhost:8000/debug/identity \
   -H "Content-Type: application/json" \
--d '{"session_id":"s1","customer_id":"123","contract_id":"C1"}'
+  -d '{"session_id":"s1","customer_id":"123","contract_id":"C1"}'
 ```
 
-### 25.4. SSE gives incorrect MIME type
+### 25.4. SSE dá MIME type incorreto
 
-The correct endpoint is:
+O endpoint correto é:
 
 ```text
 GET /gateway/events/{session_id}
 ```
 
-The `session_id` needs to be the full canonical key returned by the gateway:
+O `session_id` precisa ser a chave canônica completa retornada pelo gateway:
 
 ```text
 tenant_id:agent_id:session_id_original
 ```
 
-Example:
+Exemplo:
 
 ```text
 default:financeiro_agent:teste-sse-001
 ```
 
-### 25.5. Langfuse does not show traces
+### 25.5. Langfuse não mostra traces
 
-Check:
+Verifique:
 
 ```env
 ENABLE_LANGFUSE=true
@@ -6124,16 +6099,16 @@ LANGFUSE_SECRET_KEY=<secret-key>
 LANGFUSE_HOST=http://localhost:3005
 ```
 
-And check:
+E confira:
 
 ```bash
 curl http://localhost:8000/health
 curl http://localhost:8000/debug/env
 ```
 
-### 25.6. Autonomous Bank does not connect
+### 25.6. Banco Autonomous não conecta
 
-For development, simplify first:
+Para desenvolvimento, simplifique primeiro:
 
 ```env
 SESSION_REPOSITORY_PROVIDER=memory
@@ -6142,44 +6117,44 @@ CHECKPOINT_REPOSITORY_PROVIDER=memory
 USAGE_REPOSITORY_PROVIDER=memory
 ```
 
-Then go back to `autonomous` when the wallet, DSN, and variables are correct.
+Depois volte para `autonomous` quando wallet, DSN e variáveis estiverem corretos.
 
 ---
 
 
-### 25.7. LLM responds by making up or ignoring evidence
+### 25.7. LLM responde inventando ou ignorando evidências
 
-When the LLM invents data, confirms a non-existent action, or ignores a tool, the problem is not always in the model. Often the problem lies in how `messages` was set up.
+Quando o LLM inventa dados, confirma uma ação inexistente ou ignora uma tool, nem sempre o problema está no modelo. Muitas vezes o problema está em como `messages` foi montado.
 
-Check:
-
-```text
-Does the system prompt clearly prohibit making up data?
-Does the user prompt separate MCP evidence from instructions?
-Was the tool failure explicitly reported to the LLM?
-Did the agent send a confusing dump of mcp_results instead of a useful summary?
-Did the RAG bring relevant documents or noise?
-Did the prompt ask for a clear response format?
-Is there duplicate history confusing the answer?
-```
-
-Example of correction:
+Verifique:
 
 ```text
-Bad:
-Respond about the customer's payment using the data below:[...]
-
-Better:
-The consultar_pagamentos_financeiro tool returned ok=false.
-Do not confirm payment.
-Report that proof of payment was not found.
+O system prompt proíbe claramente inventar dados?
+O user prompt separa evidências MCP de instruções?
+A falha da tool foi informada explicitamente ao LLM?
+O agente enviou um dump confuso de mcp_results em vez de um resumo útil?
+O RAG trouxe documentos relevantes ou ruído?
+O prompt pediu formato de resposta claro?
+Há histórico duplicado confundindo a resposta?
 ```
 
-In a development environment, record a sanitized version of `messages` to review what actually reached the LLM. Never log raw prompts with CPF, token, credential, sensitive data, or large payloads from external systems.
+Exemplo de correção:
 
-## 26. Minimum delivery template for a new agent
+```text
+Ruim:
+  Responda sobre o pagamento do cliente usando os dados abaixo: [...]
 
-When finalizing an implementation, the minimum delivery must contain:
+Melhor:
+  A tool consultar_pagamentos_financeiro retornou ok=false.
+  Não confirme pagamento.
+  Informe que a evidência de pagamento não foi encontrada.
+```
+
+Em ambiente de desenvolvimento, registre uma versão sanitizada de `messages` para revisar o que realmente chegou ao LLM. Nunca registre prompts brutos com CPF, token, credencial, dados sensíveis ou payloads grandes de sistemas externos.
+
+## 26. Modelo mínimo de entrega de um novo agente
+
+Ao finalizar uma implementação, a entrega mínima deve conter:
 
 ```text
 app/agents/<agent_name>.py
@@ -6193,60 +6168,60 @@ config/agents/<agent_id>/prompt_policy.yaml
 config/agents/<agent_id>/guardrails.yaml
 config/agents/<agent_id>/judges.yaml
 app/workflows/agent_graph.py
-app/state.py, if necessary
-.env.example or variable documentation
-README.md with curl tests
+app/state.py, se necessário
+.env.example ou documentação de variáveis
+README.md com testes curl
 ```
 
 ---
 
-## 27. Complete test example
+## 27. Exemplo de teste completo
 
 ```bash
 # 1. Health
 curl http://localhost:8000/health
 
-# 2. Agents
+# 2. Agentes
 curl http://localhost:8000/agents
 
-# 3. MCP Tools
+# 3. Tools MCP
 curl http://localhost:8000/debug/mcp/tools
 
-# 4. Routing
+# 4. Roteamento
 curl -X POST http://localhost:8000/debug/route \
   -H "Content-Type: application/json" \
   -d '{
-"text": "I want to check my payment",
-"context": {"agent_id": "financeiro_agent", "tenant_id": "default"}
-}'
+    "text": "Quero consultar meu pagamento",
+    "context": {"agent_id": "financeiro_agent", "tenant_id": "default"}
+  }'
 
-# 5. Identity
+# 5. Identidade
 curl -X POST http://localhost:8000/debug/identity \
   -H "Content-Type: application/json" \
   -d '{
-"session_id": "teste-final-001",
-"customer_id": "12345",
-"contract_id": "ABC-999"
-}'
+    "session_id": "teste-final-001",
+    "customer_id": "12345",
+    "contract_id": "ABC-999"
+  }'
 
-# 6. Actual message
+# 6. Mensagem real
 curl -X POST http://localhost:8000/gateway/message \
   -H "Content-Type: application/json" \
   -d '{
-"channel": "web",
-"agent_id": "financeiro_agent",
-"tenant_id": "default",
-"payload": {
-"text": "I want to check my payment",
-"session_id": "teste-final-001",
-"user_id": "user-001",
-"customer_id": "12345",
-"contract_id": "ABC-999",
-"message_id": "msg-final-001"
-}
-}'
+    "channel": "web",
+    "agent_id": "financeiro_agent",
+    "tenant_id": "default",
+    "payload": {
+      "text": "Quero consultar meu pagamento",
+      "session_id": "teste-final-001",
+      "user_id": "user-001",
+      "customer_id": "12345",
+      "contract_id": "ABC-999",
+      "message_id": "msg-final-001"
+    }
+  }'
 
-# 7. History
+# 7. Histórico
 curl http://localhost:8000/sessions/default:financeiro_agent:teste-final-001/messages
 
 # 8. Checkpoint
@@ -6257,316 +6232,316 @@ curl http://localhost:8000/sessions/default:financeiro_agent:teste-final-001/che
 
 ## 28. Agent Gateway / Global Supervisor
 
-This chapter is a separate discussion. In a multi-agent architecture, it's not enough to know how to build an isolated agent backend. At some point, the frontend receives a message from the user and needs to decide **which agent backend should handle that conversation**.
+Este capítulo é uma tratativa à parte. Em uma arquitetura com vários agentes, não basta saber construir um backend de agente isolado. Em algum momento o frontend recebe uma mensagem do usuário e precisa decidir **qual backend de agente deve tratar aquela conversa**.
 
-This decision should not be scattered across the frontend, nor duplicated within each agent. That's what the **Agent Gateway** is for, also called the **Global Supervisor** here.
+Essa decisão não deve ficar espalhada no frontend, nem duplicada dentro de cada agente. Para isso existe o **Agent Gateway**, também chamado aqui de **Global Supervisor**.
 
-### 28.1. Before the code: what problem does the Agent Gateway solve?
+### 28.1. Antes do código: qual problema o Agent Gateway resolve?
 
-Imagine that the company has three independent backends:
+Imagine que a empresa tenha três backends independentes:
 
 ```text
-Accounts Backend
-handles billing, payment, consumption, duplicate bills, disputes
+Backend Contas
+  resolve fatura, pagamento, consumo, segunda via, contestação
 
-Offers Backend
-handles plans, contracting, upgrades, retention, discounts
+Backend Ofertas
+  resolve planos, contratação, upgrade, retenção, desconto
 
-Support Backend
-handles slow internet, signal, network, modem, technical failure
+Backend Suporte
+  resolve internet lenta, sinal, rede, modem, falha técnica
 ```
 
-Without a global gateway, the frontend would have to know rules such as:
+Sem um gateway global, o frontend teria que saber regras como:
 
 ```text
-If the message has "bill", call Accounts.
-If the message has "plan", call Offers.
-If the message has "slow internet," call Support.
+Se a mensagem tem "fatura", chamar Contas.
+Se a mensagem tem "plano", chamar Ofertas.
+Se a mensagem tem "internet lenta", chamar Suporte.
 ```
 
-This seems simple at first, but it becomes a problem when:
+Isso parece simples no começo, mas vira problema quando:
 
-- many agents appear;
-- a conversation starts in Accounts and then changes to Offers;
-- a message is ambiguous, such as “I want to cancel”;
-- each channel, Web, WhatsApp and Voice, begins to implement its own rule;
-- the developer needs to maintain routing, session, and handoff in multiple places.
+- surgem muitos agentes;
+- uma conversa começa em Contas e depois muda para Ofertas;
+- uma mensagem é ambígua, como “quero cancelar”;
+- cada canal, Web, WhatsApp e Voz, começa a implementar sua própria regra;
+- o desenvolvedor precisa manter roteamento, sessão e handoff em vários lugares.
 
-The **Agent Gateway** centralizes this decision.
+O **Agent Gateway** centraliza essa decisão.
 
-It receives the normalized message from the channel, discovers the correct backend, and forwards the request to the chosen backend.
+Ele recebe a mensagem normalizada do canal, descobre o backend correto e encaminha a requisição para o backend escolhido.
 
 ```text
-User
-↓
-Frontend / Channel
-↓
+Usuário
+  ↓
+Frontend / Canal
+  ↓
 Agent Gateway / Global Supervisor
-↓
-Accounts Backend | Offers Backend | Support Backend | Other backends
+  ↓
+Backend Contas | Backend Ofertas | Backend Suporte | Outros backends
 ```
 
-The Gateway **does not replace the agent**. It must not contain a billing, offer or support business rule. It just decides **who should receive the message**.
+O Gateway **não substitui o agente**. Ele não deve conter regra de negócio de fatura, oferta ou suporte. Ele apenas decide **quem deve receber a mensagem**.
 
-### 28.2. Difference between Agent Supervisor and Global Supervisor
+### 28.2. Diferença entre Supervisor do agente e Global Supervisor
 
-Within an agent backend, you can have a local supervisor. This supervisor decides between the agent's own internal paths.
+Dentro de um backend de agente, você pode ter um supervisor local. Esse supervisor decide entre caminhos internos do próprio agente.
 
-Example within the Accounts agent:
-
-```text
-Message: "My bill was high"
-
-Local supervisor of the Accounts Backend decides:
-- explain bill
-- check payments
-- open dispute
-- call a human
-   ```
-
-The **Global Supervisor** decides at a higher level:
+Exemplo dentro do agente de Contas:
 
 ```text
-Message: "My internet is slow"
+Mensagem: "Minha fatura veio alta"
 
-Global Supervisor decides:
-- this is not Accounts
-- this should go to Support
-   ```
+Supervisor local do Backend Contas decide:
+  - explicar fatura
+  - consultar pagamentos
+  - abrir contestação
+  - chamar humano
+```
 
-The correct separation is:
+O **Global Supervisor** decide em um nível acima:
+
+```text
+Mensagem: "Minha internet está lenta"
+
+Global Supervisor decide:
+  - isso não é Contas
+  - isso deve ir para Suporte
+```
+
+A separação correta é:
 
 ```text
 Global Supervisor / Agent Gateway
-decides the backend
+  decide o backend
 
-Local backend supervisor
-decides the agent's internal flow
+Supervisor local do backend
+  decide o fluxo interno do agente
 
-Specialized agent
-executes the business logic
+Agente especializado
+  executa a lógica de negócio
 ```
 
-This separation prevents the framework or gateway from being contaminated with domain-specific details.
+Essa separação evita que o framework ou o gateway fiquem contaminados com detalhes específicos de um domínio.
 
-### 28.3. What belongs to the Agent Gateway
+### 28.3. O que pertence ao Agent Gateway
 
-The Gateway must take care of cross-cutting responsibilities between backends:
+O Gateway deve cuidar de responsabilidades transversais entre backends:
 
 ```text
 agent_gateway/
-app/main.py
-exposes /gateway/message, /gateway/events/{session_id}, /debug/route,
-/backends, /backends/health and /health
+  app/main.py
+    expõe /gateway/message, /gateway/events/{session_id}, /debug/route,
+    /backends, /backends/health e /health
 
-app/settings.py
-reads global gateway environment variables
+  app/settings.py
+    lê variáveis de ambiente do gateway global
 
-config/backends.yaml
-declares which backends exist, their URLs, domains, keywords and priority
+  config/backends.yaml
+    declara quais backends existem, suas URLs, domínios, keywords e prioridade
 
-.env.example
-documents the routing mode, session TTL, timeout and LLM provider
+  .env.example
+    documenta o modo de roteamento, TTL de sessão, timeout e provider LLM
 ```
 
-The Gateway can use framework engines for:
+O Gateway pode usar motores do framework para:
 
-- global routing;
-- global session;
-- HTTP client for backends;
-- LLM supervisor;
-- observability;
-- event publishing;
-- SSE proxy.
+- roteamento global;
+- sessão global;
+- client HTTP para backends;
+- supervisor LLM;
+- observabilidade;
+- publicação de eventos;
+- proxy SSE.
 
-In the `agent_gateway/app/main.py file`, the gateway uses framework components such as:
+No arquivo `agent_gateway/app/main.py`, o gateway usa componentes do framework como:
 
 ```python
 from agent_framework.global_supervisor import (
-BackendClient,
-BackendRegistry,
-GlobalRouteRequest,
-GlobalSupervisorRouter,
-InMemoryGlobalSessionStore,
+    BackendClient,
+    BackendRegistry,
+    GlobalRouteRequest,
+    GlobalSupervisorRouter,
+    InMemoryGlobalSessionStore,
 )
 ```
 
-This means that the gateway is not creating a parallel routing mechanism. It is using a layer specific to the framework to govern multiple backends.
+Isso significa que o gateway não está criando um mecanismo paralelo de roteamento. Ele está usando uma camada própria do framework para governar múltiplos backends.
 
-### 28.4. What does not belong to the Agent Gateway
+### 28.4. O que não pertence ao Agent Gateway
 
-The Gateway should not implement specific rules such as:
-
-```text
-consult_invoice
-consult_payments
-open_dispute
-consult_imdb
-search_speech_analytics
-open_sr_siebel
-calculate_pro_rata
-resolve_ean
-```
-
-These functionalities belong to specialized backends or MCP servers.
-
-A rule of thumb:
+O Gateway não deve implementar regras específicas como:
 
 ```text
-If the logic depends on the business of a specific agent, it should not be in the Gateway.
-If the logic decides which backend should handle the conversation, it can stay in the Gateway.
+consultar_fatura
+consultar_pagamentos
+abrir_contestacao
+consultar_imdb
+buscar_speech_analytics
+abrir_sr_siebel
+calcular_pro_rata
+resolver_ean
 ```
 
-### 28.5. Structure of the `agent_gateway` project
+Essas funcionalidades pertencem aos backends especializados ou aos MCP servers.
 
-The minimum structure observed in the project is:
+Uma regra prática:
+
+```text
+Se a lógica depende do negócio de um agente específico, ela não deve ficar no Gateway.
+Se a lógica decide qual backend deve tratar a conversa, ela pode ficar no Gateway.
+```
+
+### 28.5. Estrutura do projeto `agent_gateway`
+
+A estrutura mínima observada no projeto é:
 
 ```text
 agent_gateway/
-app/
-main.py
-settings.py
-config/
-backends.yaml
-docs/
-ARQUITETURA_GLOBAL_SUPERVISOR.md
-.env.example
-Dockerfile
-README.md
-requirements.txt
+  app/
+    main.py
+    settings.py
+  config/
+    backends.yaml
+  docs/
+    ARQUITETURA_GLOBAL_SUPERVISOR.md
+  .env.example
+  Dockerfile
+  README.md
+  requirements.txt
 ```
 
-Each file has a clear responsibility:
+Cada arquivo tem uma responsabilidade clara:
 
-| File | Responsibility |
+| Arquivo | Responsabilidade |
 |---|---|
-| `app/main.py` | exposes HTTP endpoints, calls the global router, forwards messages to backends, and performs SSE proxying |
-| `app/settings.py` | centralizes global gateway variables |
-| `config/backends.yaml` | registers available backends and routing rules by domain/keyword |
-| `.env.example` | documents how to enable/disable routing modes and providers |
-| `Dockerfile` | packages the gateway as a separate service |
-| `docs/ARQUITETURA_GLOBAL_SUPERVISOR.md` | explains the conceptual architecture |
+| `app/main.py` | expõe endpoints HTTP, chama o router global, encaminha mensagens aos backends e faz proxy SSE |
+| `app/settings.py` | centraliza variáveis do gateway global |
+| `config/backends.yaml` | cadastra backends disponíveis e regras de roteamento por domínio/keyword |
+| `.env.example` | documenta como ligar/desligar modos de roteamento e providers |
+| `Dockerfile` | empacota o gateway como serviço separado |
+| `docs/ARQUITETURA_GLOBAL_SUPERVISOR.md` | explica a arquitetura conceitual |
 
-### 28.6. What the developer should consider before configuring the Gateway
+### 28.6. Como o desenvolvedor deve pensar antes de configurar o Gateway
 
-Before editing `config/backends.yaml`, the developer must answer four questions:
-
-```text
-1. What agent backends are there?
-2. What is the domain of responsibility of each backend?
-3. What words or examples indicate each domain?
-4. What should happen when the message is ambiguous?
-   ```
-
-Example:
+Antes de editar `config/backends.yaml`, o desenvolvedor deve responder quatro perguntas:
 
 ```text
-Message: "I want to cancel"
+1. Quais backends de agente existem?
+2. Qual é o domínio de responsabilidade de cada backend?
+3. Quais palavras ou exemplos indicam cada domínio?
+4. O que deve acontecer quando a mensagem for ambígua?
 ```
 
-This message could mean:
+Exemplo:
 
 ```text
-Cancel a single service    → maybe Accounts or Offers
-Cancel the entire plan     → maybe Offers or Retention
-Cancel due to a network problem → maybe Support
+Mensagem: "Quero cancelar"
 ```
 
-In this case, the keyword router may not be sufficient. `Hybrid` mode can keep the backend active if the conversation already has context, or call the LLM supervisor if there is a conflict.
+Essa mensagem pode significar:
 
-### 28.7. Configuring the backends in `config/backends.yaml`
+```text
+Cancelar serviço avulso    → talvez Contas ou Ofertas
+Cancelar plano inteiro     → talvez Ofertas ou Retenção
+Cancelar por problema rede → talvez Suporte
+```
 
-The main Gateway configuration file is:
+Nesse caso, o router por keyword pode não ser suficiente. O modo `hybrid` pode manter o backend ativo se a conversa já tiver contexto, ou chamar o supervisor LLM se houver conflito.
+
+### 28.7. Configurando os backends em `config/backends.yaml`
+
+O arquivo principal de configuração do Gateway é:
 
 ```text
 agent_gateway/config/backends.yaml
 ```
 
-Example:
+Exemplo:
 
 ```yaml
 default_backend: contas
 
 backends:
-  accounts:
+  contas:
     url: http://localhost:8001
-    description: Backend responsible for invoices, bills, payments, usage, duplicate, and disputes.
+    description: Backend responsável por faturas, contas, pagamentos, consumo, segunda via e contestação.
     domains: [contas, fatura, pagamento, consumo, contestacao]
     keywords: [fatura, conta, boleto, pagamento, consumo, segunda via, contestar, contestação, valor, cobrança]
     examples:
-      - I want to check my invoice
-      - My bill is high
-      - I need a duplicate of the payment slip
+      - Quero consultar minha fatura
+      - Minha conta veio alta
+      - Preciso da segunda via do boleto
     priority: 10
     default_agent_id: telecom_contas
 
-  offers:
+  ofertas:
     url: http://localhost:8002
-    description: Backend responsible for offers, plans, upgrades, retention and contracting.
+    description: Backend responsável por ofertas, planos, upgrades, retenção e contratação.
     domains: [ofertas, planos, retenção, contratação]
     keywords: [oferta, plano, contratar, upgrade, desconto, promoção, pacote, retenção, cancelar serviço]
     examples:
-      - I want to change my plan
-      - Do you have any offers for me?
-      - I want to cancel a service
+      - Quero trocar meu plano
+      - Tem alguma oferta para mim?
+      - Quero cancelar um serviço
     priority: 20
     default_agent_id: telecom_ofertas
 
-  support:
+  suporte:
     url: http://localhost:8003
-    description: Backend responsible for technical support, outages, network, internet and operational service.
+    description: Backend responsável por suporte técnico, falhas, rede, internet e atendimento operacional.
     domains: [suporte, técnico, rede, internet]
     keywords: [internet, sinal, rede, suporte, técnico, problema, falha, sem conexão, modem]
     examples:
-      - My internet is slow
-      - I have no signal
-      - I need technical support
+      - Minha internet está lenta
+      - Estou sem sinal
+      - Preciso de suporte técnico
     priority: 30
     default_agent_id: telecom_suporte
 ```
 
-The developer should not fill in this YAML as a random list of words. They should think **of intent families**.
+O desenvolvedor não deve preencher esse YAML como uma lista aleatória de palavras. Ele deve pensar em **famílias de intenção**.
 
-Correct example:
-
-```text
-Family: accounts
-subjects: bill, payment, usage, duplicate, dispute
-```
-
-Bad example:
+Exemplo correto:
 
 ```text
-Family: anything that has "value"
+Família: contas
+  assuntos: fatura, pagamento, consumo, segunda via, contestação
 ```
 
-The word “amount” may appear in invoice, offer, discount, dispute or charge. Generic words should be used with caution.
+Exemplo ruim:
 
-### 28.8. Choosing the global routing mode
+```text
+Família: qualquer coisa que tenha "valor"
+```
 
-The gateway `.env` has the variable:
+A palavra “valor” pode aparecer em fatura, oferta, desconto, contestação ou cobrança. Palavras genéricas devem ser usadas com cuidado.
+
+### 28.8. Escolhendo o modo de roteamento global
+
+O `.env` do gateway possui a variável:
 
 ```env
 GLOBAL_ROUTING_MODE=hybrid
 ```
 
-The possible modes are:
+Os modos possíveis são:
 
-| Mode | How it decides | When to use |
+| Modo | Como decide | Quando usar |
 |---|---|---|
-| `router` | uses rules, keywords, domains and priority | local development, deterministic testing, environments with low ambiguity |
-| `supervisor` | uses LLM to choose backend | very similar domains or very open messages |
-| `hybrid` | keeps backend active, uses rule and calls LLM in conflict | recommended for initial production |
+| `router` | usa regras, keywords, domínios e prioridade | desenvolvimento local, testes determinísticos, ambientes com baixa ambiguidade |
+| `supervisor` | usa LLM para escolher backend | domínios muito parecidos ou mensagens muito abertas |
+| `hybrid` | mantém backend ativo, usa regra e chama LLM em conflito | recomendado para produção inicial |
 
-The practical decision is:
+A decisão prática é:
 
 ```text
-If you want full predictability, use router.
-If you want strong semantic interpretation, use supervisor.
-If you want a balance between context, rule, and LLM, use hybrid.
+Se você quer previsibilidade total, use router.
+Se você quer interpretação semântica forte, use supervisor.
+Se você quer equilíbrio entre contexto, regra e LLM, use hybrid.
 ```
 
-For most corporate projects, start with:
+Para a maioria dos projetos corporativos, comece com:
 
 ```env
 GLOBAL_ROUTING_MODE=hybrid
@@ -6575,134 +6550,134 @@ GLOBAL_USE_SUPERVISOR_ON_CONFLICT=true
 GLOBAL_MIN_ROUTER_CONFIDENCE=0.55
 ```
 
-### 28.9. Understanding global session and backend session
+### 28.9. Entendendo sessão global e sessão do backend
 
-The Gateway maintains a global session, for example:
+O Gateway mantém uma sessão global, por exemplo:
 
 ```text
 global_session_id = s1
 ```
 
-The backend can maintain another internal session, for example:
+O backend pode manter outra sessão interna, por exemplo:
 
 ```text
 backend_session_id = default:telecom_contas:s1
 ```
 
-The Gateway code adjusts the response to keep both identifiers in the `metadata`:
+O código do Gateway ajusta a resposta para manter os dois identificadores no `metadata`:
 
 ```json
 {
+  "session_id": "s1",
+  "metadata": {
+    "global_session_id": "s1",
+    "backend_session_id": "default:telecom_contas:s1",
+    "selected_backend": "contas"
+  }
+}
+```
+
+Essa separação é importante porque o usuário conversa com uma sessão global, mas cada backend pode precisar de sua própria chave interna para memória, checkpoint e histórico.
+
+### 28.9.1. Como o Gateway deve entregar sessão ao backend
+
+Para que o agente consiga entender de onde veio a conversa, o Gateway deve encaminhar a sessão dentro de `context.session` ou em uma estrutura equivalente normalizada pelo framework.
+
+Exemplo de payload conceitual que chega ao backend:
+
+```json
+{
+  "channel": "web",
+  "tenant_id": "default",
+  "agent_id": "financeiro_agent",
+  "payload": {
+    "text": "Quero consultar meu pagamento",
     "session_id": "s1",
-    "metadata": {
-        "global_session_id": "s1",
-        "backend_session_id": "default:telecom_contas:s1",
-        "selected_backend": "contas"
-    }
-}
-```
-
-This separation is important because the user chats with a global session, but each backend may need its own internal key for memory, checkpoint, and history.
-
-### 28.9.1. How the Gateway should deliver the session to the backend
-
-In order for the agent to understand where the conversation came from, the Gateway must forward the session within `context.session` or in an equivalent structure standardized by the framework.
-
-Example of a conceptual payload that reaches the backend:
-
-```json
-{
-    "channel": "web",
-    "tenant_id": "default",
-    "agent_id": "financeiro_agent",
-    "payload": {
-        "text": "I want to check my payment",
-        "session_id": "s1",
-        "customer_id": "12345"
+    "customer_id": "12345"
+  },
+  "context": {
+    "session": {
+      "global_session_id": "s1",
+      "backend_session_id": "default:financeiro_agent:s1",
+      "active_backend": "financeiro",
+      "channel": "web",
+      "tenant_id": "default",
+      "metadata": {
+        "selected_backend": "financeiro",
+        "route_confidence": 0.82
+      }
     },
-    "context": {
-        "session": {
-            "global_session_id": "s1",
-            "backend_session_id": "default:financeiro_agent:s1",
-            "active_backend": "financeiro",
-            "channel": "web",
-            "tenant_id": "default",
-            "metadata": {
-                "selected_backend": "financeiro",
-                "route_confidence": 0.82
-          }
-        },
-        "business_context": {
-            "customer_key": "12345",
-            "session_key": "default:financeiro_agent:s1"
-        }
+    "business_context": {
+      "customer_key": "12345",
+      "session_key": "default:financeiro_agent:s1"
     }
+  }
 }
 ```
 
-The agent developer must understand that `context.session` is not “just another place to look for any parameter.” It is the contract for the continuity of the conversation. For MCP calls, always prefer `business_context` and `tool_arguments`.
+O desenvolvedor do agente deve entender que `context.session` não é “mais um lugar para buscar qualquer parâmetro”. Ele é o contrato de continuidade da conversa. Para chamadas MCP, prefira sempre `business_context` e `tool_arguments`.
 
-### 28.10. Uploading the Agent Gateway locally
+### 28.10. Subindo o Agent Gateway localmente
 
-Enter the gateway directory:
+Entre no diretório do gateway:
 
 ```bash
 cd agent_gateway
 ```
 
-Copy the environment file:
+Copie o arquivo de ambiente:
 
 ```bash
 cp .env.example .env
 ```
 
-Configure the `PYTHONPATH` to see the framework:
+Configure o `PYTHONPATH` para enxergar o framework:
 
 ```bash
 export PYTHONPATH=../agent_framework/src:.
 ```
 
-Start the service:
+Suba o serviço:
 
 ```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
-Validate the health:
+Valide o health:
 
 ```bash
 curl http://localhost:8010/health
 ```
 
-Expected response:
+Resposta esperada:
 
 ```json
 {
-    "status": "ok",
-    "app": "agent-gateway-global-supervisor",
-    "routing_mode": "hybrid",
-    "backends": ["accounts", "offers", "support"],
-    "llm_provider": "mock"
+  "status": "ok",
+  "app": "agent-gateway-global-supervisor",
+  "routing_mode": "hybrid",
+  "backends": ["contas", "ofertas", "suporte"],
+  "llm_provider": "mock"
 }
 ```
 
-If this endpoint does not respond, the problem is still in the gateway, not in the backends.
+Se esse endpoint não responder, o problema ainda está no gateway, não nos backends.
 
-### 28.11. Bringing up the agent backends
+### 28.11. Subindo os backends de agente
 
-The Gateway only routes correctly if the backends configured in `backends.yaml` are up and running.
+O Gateway só roteia corretamente se os backends configurados em `backends.yaml` estiverem de pé.
 
-Local example:
+Exemplo local:
 
 ```text
 Gateway        http://localhost:8010
-Accounts         http://localhost:8001
-Offers        http://localhost:8002
-Support        http://localhost:8003
+Contas         http://localhost:8001
+Ofertas        http://localhost:8002
+Suporte        http://localhost:8003
 Frontend       http://localhost:5173
 ```
 
-Each backend needs to expose at least:
+Cada backend precisa expor, no mínimo:
 
 ```text
 GET  /health
@@ -6710,141 +6685,141 @@ POST /gateway/message
 GET  /gateway/events/{session_id}
 ```
 
-The Gateway endpoint`/backends/health` checks the health of the backends:
+O endpoint `/backends/health` do Gateway verifica a saúde dos backends:
 
 ```bash
 curl http://localhost:8010/backends/health
 ```
 
-Use this test before blaming routing. If the backend is down, the Gateway may even choose correctly, but it will fail to route.
+Use esse teste antes de culpar o roteamento. Se o backend está fora do ar, o Gateway pode até escolher corretamente, mas falhará no encaminhamento.
 
-### 28.12. Testing only the route decision
+### 28.12. Testando apenas a decisão de rota
 
-Before sending a real message to the backend, test the decision:
+Antes de enviar uma mensagem real para o backend, teste a decisão:
 
 ```bash
 curl -X POST http://localhost:8010/debug/route \
   -H 'content-type: application/json' \
   -d '{
-"channel": "web",
-"payload": {
-"text": "My bill was high",
-"session_id": "s1"
-}
-}'
+    "channel": "web",
+    "payload": {
+      "text": "Minha fatura veio alta",
+      "session_id": "s1"
+    }
+  }'
 ```
 
-Expected result:
+Resultado esperado:
 
 ```json
 {
-    "backend_id": "accounts",
-    "confidence": 0.8,
-    "reason": "Backend chosen by rules: matches=[ 'invoice']"
+  "backend_id": "contas",
+  "confidence": 0.8,
+  "reason": "Backend escolhido por regras: matches=['fatura']"
 }
 ```
 
-The developer should interpret the result as follows:
+O desenvolvedor deve interpretar o resultado assim:
 
 ```text
-backend_id   → which backend the gateway would send the message to
-confidence   → how strong the decision was
-reason       → why the decision was made
+backend_id   → para qual backend o gateway mandaria a mensagem
+confidence   → quão forte foi a decisão
+reason       → por que a decisão foi tomada
 ```
 
-If the chosen backend is wrong, adjust `domains`, `keywords`, `examples`, `priority`, or the routing mode.
+Se o backend escolhido estiver errado, ajuste `domains`, `keywords`, `examples`, `priority` ou o modo de roteamento.
 
-### 28.13. Sending a real message through the Gateway
+### 28.13. Enviando mensagem real pelo Gateway
 
-Once the route decision is correct, send the actual message:
+Depois que a decisão de rota estiver correta, envie a mensagem real:
 
 ```bash
 curl -X POST http://localhost:8010/gateway/message \
   -H 'content-type: application/json' \
   -d '{
-"channel": "web",
-"payload": {
-"text": "My bill was high",
-"session_id": "s1",
-"msisdn": "11999999999"
-}
-}'
+    "channel": "web",
+    "payload": {
+      "text": "Minha fatura veio alta",
+      "session_id": "s1",
+      "msisdn": "11999999999"
+    }
+  }'
 ```
 
-The Gateway will:
+O Gateway fará:
 
 ```text
-1. Receive the message.
-2. Issue IC.GLOBAL_GATEWAY_RECEIVED.
-3. Create a GlobalRouteRequest.
-4. Call GlobalSupervisorRouter.
-5. Choose the backend.
-6. Issue IC.GLOBAL_BACKEND_SELECTED.
-7. Forward to the backend /gateway/message.
-8. Save the session's active_backend.
-9. Add route metadata to the response.
-10. Issue IC.GLOBAL_GATEWAY_COMPLETED.
-   ```
-
-### 28.14. Handoff between backends
-
-The handoff happens when a backend realizes that the conversation must change domains.
-
-Example:
-
-```text
-User started in Accounts:
-"My bill was high"
-
-Then they asked:
-"Do you have a better plan to reduce this amount?"
+1. Receber a mensagem.
+2. Emitir IC.GLOBAL_GATEWAY_RECEIVED.
+3. Criar uma GlobalRouteRequest.
+4. Chamar GlobalSupervisorRouter.
+5. Escolher o backend.
+6. Emitir IC.GLOBAL_BACKEND_SELECTED.
+7. Encaminhar para o /gateway/message do backend.
+8. Guardar o active_backend da sessão.
+9. Acrescentar metadados de rota na resposta.
+10. Emitir IC.GLOBAL_GATEWAY_COMPLETED.
 ```
 
-The Accounts backend can respond with metadata requesting a handoff:
+### 28.14. Handoff entre backends
+
+O handoff acontece quando um backend percebe que a conversa deve mudar de domínio.
+
+Exemplo:
+
+```text
+Usuário começou em Contas:
+  "Minha fatura veio alta"
+
+Depois perguntou:
+  "Tem algum plano melhor para reduzir esse valor?"
+```
+
+O backend de Contas pode responder com metadata pedindo troca:
 
 ```json
 {
-    "metadata": {
-      "handover_backend": "offers"
-    }
+  "metadata": {
+    "handover_backend": "ofertas"
+  }
 }
 ```
 
-The Gateway detects this field and automatically calls the new backend.
+O Gateway detecta esse campo e chama automaticamente o novo backend.
 
-The developer needs to understand that handoff is not an error. It is a controlled transition between domains.
+O desenvolvedor precisa entender que handoff não é erro. É uma transição controlada entre domínios.
 
-### 28.15. SSE Proxy via Gateway
+### 28.15. Proxy SSE pelo Gateway
 
-The Gateway also has an endpoint:
+O Gateway também possui endpoint:
 
 ```text
 GET /gateway/events/{session_id}
 ```
 
-This endpoint proxies the SSE of the active backend.
+Esse endpoint faz proxy do SSE do backend ativo.
 
-Flow:
+Fluxo:
 
 ```text
-Frontend opens EventSource in the Gateway
-↓
-Gateway expects a global session to exist
-↓
-Gateway discovers active_backend
-↓
-Gateway assembles backend SSE URL
-↓
-Gateway passes the text/event-stream events to the frontend
+Frontend abre EventSource no Gateway
+  ↓
+Gateway espera existir sessão global
+  ↓
+Gateway descobre active_backend
+  ↓
+Gateway monta URL SSE do backend
+  ↓
+Gateway repassa os eventos text/event-stream para o frontend
 ```
 
-Test:
+Teste:
 
 ```bash
 curl -N http://localhost:8010/gateway/events/s1
 ```
 
-Events expected at the beginning:
+Eventos esperados no início:
 
 ```text
 event: connected
@@ -6852,33 +6827,33 @@ data: {"session_id":"s1","component":"agent_gateway"}
 
 ```
 
-After a message is sent to`/gateway/message`, the Gateway should output something like:
+Depois que uma mensagem for enviada para `/gateway/message`, o Gateway deve emitir algo como:
 
 ```text
 event: backend.selected
 data: {"session_id":"s1","backend_id":"contas","backend_session_id":"s1"}
 ```
 
-If a MIME type error appears, the active backend is probably not returning `text/event-stream` in`/gateway/events/{session_id}`.
+Se aparecer erro de MIME type, o backend ativo provavelmente não está retornando `text/event-stream` em `/gateway/events/{session_id}`.
 
-### 28.16. Agent Gateway IC and NOC
+### 28.16. IC e NOC do Agent Gateway
 
-The Gateway must issue its own events, different from the agents' internal events.
+O Gateway deve emitir eventos próprios, diferentes dos eventos internos dos agentes.
 
-Events found in the project:
+Eventos encontrados no projeto:
 
-| Event | Meaning |
+| Evento | Significado |
 |---|---|
-| `IC.GLOBAL_GATEWAY_RECEIVED` | Gateway received message from the channel |
-| `IC.GLOBAL_BACKEND_SELECTED` | Gateway chose a backend |
-| `IC.GLOBAL_BACKEND_HANDOVER` | There was a backend change during the conversation |
-| `IC.GLOBAL_GATEWAY_COMPLETED` | Gateway completed the forwarding |
-| `NOC.005` | operational failure in the Gateway or in the call to the backend |
-| `NOC.006` | HTTP completion observed by the middleware |
+| `IC.GLOBAL_GATEWAY_RECEIVED` | Gateway recebeu mensagem do canal |
+| `IC.GLOBAL_BACKEND_SELECTED` | Gateway escolheu um backend |
+| `IC.GLOBAL_BACKEND_HANDOVER` | Houve troca de backend durante a conversa |
+| `IC.GLOBAL_GATEWAY_COMPLETED` | Gateway concluiu o encaminhamento |
+| `NOC.005` | falha operacional no Gateway ou na chamada ao backend |
+| `NOC.006` | conclusão HTTP observada pelo middleware |
 
-These events do not replace the backend IC/NOC/GRL. They complement the end-to-end view.
+Esses eventos não substituem os IC/NOC/GRL do backend. Eles complementam a visão ponta a ponta.
 
-In full traceability, you should be able to see:
+Em uma rastreabilidade completa, você deve conseguir enxergar:
 
 ```text
 IC.GLOBAL_GATEWAY_RECEIVED
@@ -6891,34 +6866,34 @@ IC.BACKEND_WORKFLOW_COMPLETED
 IC.GLOBAL_GATEWAY_COMPLETED
 ```
 
-### 28.17. How to integrate the frontend with the Agent Gateway
+### 28.17. Como integrar o frontend ao Agent Gateway
 
-The frontend should not directly call each agent backend.
+O frontend não deve chamar diretamente cada backend de agente.
 
-Instead, it should point to:
+Em vez disso, ele deve apontar para:
 
 ```text
 POST http://localhost:8010/gateway/message
 GET  http://localhost:8010/gateway/events/{session_id}
 ```
 
-The frontend continues to send a normalized message:
+O frontend continua enviando uma mensagem normalizada:
 
 ```json
 {
-    "channel": "web",
-    "payload": {
-        "text": "My bill was high",
-        "session_id": "s1"
-    }
+  "channel": "web",
+  "payload": {
+    "text": "Minha fatura veio alta",
+    "session_id": "s1"
+  }
 }
 ```
 
-The frontend does not need to know if the message was for Accounts, Offers or Support. This information may appear in `metadata.selected_backend`, but it should not become a business rule on the frontend.
+O frontend não precisa saber se a mensagem foi para Contas, Ofertas ou Suporte. Essa informação pode aparecer em `metadata.selected_backend`, mas não deve virar regra de negócio no frontend.
 
-### 28.18. Gateway Build with Docker
+### 28.18. Build do Gateway com Docker
 
-The Gateway Dockerfile uses:
+O Dockerfile do Gateway usa:
 
 ```dockerfile
 FROM python:3.12-slim
@@ -6926,9 +6901,10 @@ WORKDIR /app
 COPY agent_framework /agent_framework
 COPY agent_gateway /app
 RUN pip install --no-cache-dir -e /agent_framework -r requirements.txt
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010"]```
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010"]
+```
 
-This assumes that, in the build context, the following directories exist:
+Isso pressupõe que, no contexto de build, existam os diretórios:
 
 ```text
 agent_framework/
@@ -6938,326 +6914,326 @@ agent_gateway/
 Build:
 
 ```bash
-docker build -t agent-gateway:local -f agent_gateway/Dockerfile.
+docker build -t agent-gateway:local -f agent_gateway/Dockerfile .
 ```
 
 Run:
 
 ```bash
 docker run --rm -p 8010:8010 \
---env-file agent_gateway/.env \
+  --env-file agent_gateway/.env \
   agent-gateway:local
 ```
 
-### 28.19. Agent Gateway implementation checklist
+### 28.19. Checklist de implementação do Agent Gateway
 
-Before considering the Gateway ready, validate:
+Antes de considerar o Gateway pronto, valide:
 
 ```text
-[ ] /health responds.
-[ ] /backends lists all expected backends.
-[ ] /backends/health can call each backend.
-[ ] /debug/route chooses the correct backend for obvious messages.
-[ ] /debug/route explains the reason for the decision.
-[ ] /gateway/message forwards to the chosen backend.
-[ ] response.metadata.selected_backend appears in the response.
-[ ] response.metadata.global_route_decision appears in the response.
-[ ] /debug/sessions shows active_backend after the first message.
-[ ] /gateway/events/{session_id} returns text/event-stream.
-[ ] handoff_backend works when a backend requests a switch.
-[ ] IC.GLOBAL_* appears in observability.
-[ ] NOC.005 appears in actual backend failures.
+[ ] /health responde.
+[ ] /backends lista todos os backends esperados.
+[ ] /backends/health consegue chamar cada backend.
+[ ] /debug/route escolhe o backend correto para mensagens óbvias.
+[ ] /debug/route explica o motivo da decisão.
+[ ] /gateway/message encaminha para o backend escolhido.
+[ ] response.metadata.selected_backend aparece na resposta.
+[ ] response.metadata.global_route_decision aparece na resposta.
+[ ] /debug/sessions mostra active_backend após primeira mensagem.
+[ ] /gateway/events/{session_id} retorna text/event-stream.
+[ ] handoff_backend funciona quando um backend solicita troca.
+[ ] IC.GLOBAL_* aparece na observabilidade.
+[ ] NOC.005 aparece em falhas reais de backend.
 ```
 
-### 28.20. Common errors in the Agent Gateway
+### 28.20. Erros comuns no Agent Gateway
 
-#### Error 1: Gateway chooses wrong backend
+#### Erro 1: Gateway escolhe backend errado
 
-Common causes:
+Causas comuns:
 
 ```text
-keywords too generic
-priority poorly defined
-insufficient examples
-GLOBAL_MIN_ROUTER_CONFIDENCE too low
-router mode used for ambiguous domain
+keywords genéricas demais
+priority mal definida
+examples insuficientes
+GLOBAL_MIN_ROUTER_CONFIDENCE muito baixo
+modo router usado para domínio ambíguo
 ```
 
-Correction:
+Correção:
 
 ```text
-1. Test /debug/route.
-2. Read the reason field.
-3. Adjust domains, keywords, and examples.
-4. If it remains ambiguous, use hybrid or supervisor.
-   ```
+1. Teste /debug/route.
+2. Leia o campo reason.
+3. Ajuste domains, keywords e examples.
+4. Se continuar ambíguo, use hybrid ou supervisor.
+```
 
-#### Error 2: Gateway chooses correctly, but returns 502
+#### Erro 2: Gateway escolhe certo, mas retorna 502
 
-This usually means that the chosen backend is down or does not expose`/gateway/message`.
+Isso normalmente significa que o backend escolhido está fora do ar ou não expõe `/gateway/message`.
 
-Test:
+Teste:
 
 ```bash
 curl http://localhost:8001/health
 curl -X POST http://localhost:8001/gateway/message \
   -H 'content-type: application/json' \
--d '{"channel":"web","payload":{"text":"teste","session_id":"s1"}}'
+  -d '{"channel":"web","payload":{"text":"teste","session_id":"s1"}}'
 ```
 
-#### Error 3: SSE returns `application/json` instead of `text/event-stream`
+#### Erro 3: SSE retorna `application/json` em vez de `text/event-stream`
 
-The active backend needs to expose SSE correctly.
+O backend ativo precisa expor SSE corretamente.
 
-Test directly on the backend:
+Teste direto no backend:
 
 ```bash
 curl -i -N http://localhost:8001/gateway/events/s1
 ```
 
-The expected header is:
+O header esperado é:
 
 ```text
 content-type: text/event-stream
 ```
 
-#### Error 4: Global session exists, but the active backend does not appear
+#### Erro 4: Sessão global existe, mas o backend ativo não aparece
 
-Check:
+Verifique:
 
 ```bash
 curl http://localhost:8010/debug/sessions
 ```
 
-Then send a message via`/gateway/message`. The `active_backend` is only defined after the Gateway successfully routes a message.
+Depois envie uma mensagem por `/gateway/message`. O `active_backend` só é definido depois que o Gateway roteia uma mensagem com sucesso.
 
-### 28.21. How to explain this architecture to a new developer
+### 28.21. Como explicar essa arquitetura para um novo desenvolvedor
 
-A simple way to teach it is:
+Uma forma simples de ensinar é:
 
 ```text
-The agent backend knows how to solve a type of problem.
-The Gateway knows how to choose which backend should solve the problem.
-The framework provides the reusable engines for both.
+O backend de agente sabe resolver um tipo de problema.
+O Gateway sabe escolher qual backend deve resolver o problema.
+O framework fornece os motores reutilizáveis para ambos.
 ```
 
-Therefore, when implementing a new agent, the developer must make two integrations:
+Portanto, ao implementar um novo agente, o desenvolvedor deve fazer duas integrações:
 
 ```text
-1. Create the specialized backend using agent_template_backend.
-2. Register this backend in agent_gateway/config/backends.yaml.
-   ```
+1. Criar o backend especializado usando agent_template_backend.
+2. Registrar esse backend no agent_gateway/config/backends.yaml.
+```
 
-They should not change the frontend for each new agent. You also should not put the new agent's business rule inside the Gateway.
+Ele não deve alterar o frontend para cada novo agente. Também não deve colocar regra de negócio do novo agente dentro do Gateway.
 
 
 ---
 
 
-## 29. Context compression with `ConversationSummaryMemory`
+## 29. Compressão de contexto com `ConversationSummaryMemory`
 
-This chapter explains the theory, architecture, and step-by-step process for implementing conversational context compression using `ConversationSummaryMemory`.
+Este capítulo explica a teoria, a arquitetura e o passo a passo para implementar compressão de contexto conversacional usando `ConversationSummaryMemory`.
 
-The motivation is simple: long corporate conversations accumulate many messages, tool results, MCP evidence, RAG context, routing decisions, operational errors, and user confirmations. If all this history is sent in full to the LLM at each turn, the agent becomes more expensive, slower, and more prone to extrapolating the context window.
+A motivação é simples: conversas corporativas longas acumulam muitas mensagens, resultados de tools, evidências MCP, contexto RAG, decisões de roteamento, erros operacionais e confirmações do usuário. Se todo esse histórico for enviado integralmente ao LLM a cada turno, o agente fica mais caro, mais lento e mais sujeito a extrapolar a janela de contexto.
 
-`ConversationSummaryMemory` solves this problem by maintaining two levels of memory:
-
-```text
-Raw memory
-Complete history saved in the message repository.
-It is used for auditing, replay, debugging, and traceability.
-
-Summarized memory
-Incremental summary of the old part of the conversation.
-It is used to assemble the prompt without loading the entire history.
-
-Recent messages
-Most recent complete interactions.
-They serve to preserve immediate details, confirmations, and local continuity.
-```
-
-The goal is not to erase the history. The goal is to separate **complete persistence** from **useful context for inference**.
-
-### 29.1. Problem that compression solves
-
-Without compression, the agent tends to use one of these strategies:
+A `ConversationSummaryMemory` resolve esse problema mantendo dois níveis de memória:
 
 ```text
-Strategy 1: send the entire history to the LLM
-Problem: high cost, higher latency, and risk of context limit.
+Memória bruta
+  Histórico completo salvo no repositório de mensagens.
+  Serve para auditoria, replay, debug e rastreabilidade.
 
-Strategy 2: send only the last N messages
-Problem: the agent forgets important decisions made earlier.
+Memória resumida
+  Resumo incremental da parte antiga da conversa.
+  Serve para montar o prompt sem carregar todo o histórico.
 
-Strategy 3: each agent builds its own memory
-Problem: loss of standardization, inconsistent behavior, and difficult maintenance.
+Mensagens recentes
+  Últimas interações completas.
+  Servem para preservar detalhes imediatos, confirmações e continuidade local.
 ```
 
-With `ConversationSummaryMemory`, the framework starts to follow a standardized strategy:
+O objetivo não é apagar o histórico. O objetivo é separar **persistência completa** de **contexto útil para inferência**.
+
+### 29.1. Problema que a compressão resolve
+
+Sem compressão, o agente tende a usar uma destas estratégias:
 
 ```text
-Old history → incremental summary
-Recent history → full messages
-Agent prompt → summary + recent messages + current message + MCP + RAG + business_context
+Estratégia 1: enviar todo o histórico ao LLM
+  Problema: alto custo, maior latência e risco de limite de contexto.
+
+Estratégia 2: enviar apenas as últimas N mensagens
+  Problema: o agente esquece decisões importantes feitas antes.
+
+Estratégia 3: cada agente monta sua própria memória
+  Problema: perda de padronização, comportamento inconsistente e manutenção difícil.
 ```
 
-This way, the agent maintains continuity in long conversations without turning the prompt into a complete session dump.
+Com `ConversationSummaryMemory`, o framework passa a seguir uma estratégia padronizada:
 
-### 29.2. Difference between memory, checkpoint and state
+```text
+Histórico antigo → resumo incremental
+Histórico recente → mensagens completas
+Prompt do agente → resumo + mensagens recentes + mensagem atual + MCP + RAG + business_context
+```
 
-It is important not to mix up three different concepts.
+Assim, o agente mantém continuidade em conversas longas sem transformar o prompt em um dump completo da sessão.
 
-| Concept | Purpose | Example | Should it go to the prompt? |
+### 29.2. Diferença entre memória, checkpoint e state
+
+É importante não misturar três conceitos diferentes.
+
+| Conceito | Finalidade | Exemplo | Deve ir para o prompt? |
 |---|---|---|---|
-| `state` | Transient data from the current LangGraph flow | intent, route, partial answer, tool results | Only curated fields |
-| checkpoint | Technical resumption of the workflow | state persisted by LangGraph | Not directly |
-| conversational memory | Semantic continuity of the conversation | summary, history, recent messages | Yes, in summary form |
+| `state` | Dados transitórios do fluxo LangGraph atual | intent, route, answer parcial, tool results | Apenas campos curados |
+| checkpoint | Retomada técnica do workflow | estado persistido pelo LangGraph | Não diretamente |
+| memória conversacional | Continuidade semântica da conversa | resumo, histórico, mensagens recentes | Sim, de forma resumida |
 
-The checkpoint allows you to recover the technical execution. Conversational memory helps the LLM understand what has already been discussed.
+O checkpoint permite recuperar a execução técnica. A memória conversacional ajuda o LLM a entender o que já foi discutido.
 
-The rule of thumb is:
+A regra prática é:
 
 ```text
-Checkpoint answers: where was the workflow?
-State answers: What's happening in this turn?
-ConversationSummaryMemory answers: what is important to remember from the previous conversation?
+Checkpoint responde: onde o workflow estava?
+State responde: o que está acontecendo neste turno?
+ConversationSummaryMemory responde: o que importa lembrar da conversa anterior?
 ```
 
-### 29.3. Where `ConversationSummaryMemory` enters the flow
+### 29.3. Onde a `ConversationSummaryMemory` entra no fluxo
 
-Compression must come in before the agent prompt is assembled.
+A compressão deve entrar antes da montagem do prompt do agente.
 
-Recommended flow:
+Fluxo recomendado:
 
 ```text
-Channel / Frontend / API
-↓
+Canal / Frontend / API
+  ↓
 POST /gateway/message
-↓
+  ↓
 ChannelGateway.normalize()
-↓
+  ↓
 IdentityResolver
-↓
+  ↓
 SessionRepository
-↓
-MemoryRepository loads raw history
-↓
-ConversationSummaryMemory prepares context
-↓
+  ↓
+MemoryRepository carrega histórico bruto
+  ↓
+ConversationSummaryMemory prepara contexto
+  ↓
 AgentWorkflow.ainvoke()
-↓
-Specialized agent
-↓
+  ↓
+Agente especializado
+  ↓
 AgentRuntimeMixin.build_messages()
-↓
+  ↓
 LLM
-↓
-Response
-↓
-Turn persistence and summary update
+  ↓
+Resposta
+  ↓
+Persistência do turno e atualização do resumo
 ```
 
-In other words, the agent should not know how to summarize the conversation. The agent should only receive the context prepared by the framework.
+Em outras palavras, o agente não deve saber como resumir a conversa. O agente deve apenas receber o contexto preparado pelo framework.
 
-### 29.4. When compression kicks in
+### 29.4. Quando a compressão entra em ação
 
-Compression is usually triggered by a message limit or context limit.
+A compressão normalmente é disparada por limite de mensagens ou limite de contexto.
 
-Example by number of messages:
+Exemplo por quantidade de mensagens:
 
 ```env
 MEMORY_SUMMARY_TRIGGER_MESSAGES=20
 MEMORY_RECENT_MESSAGES_LIMIT=8
 ```
 
-With this configuration:
+Com essa configuração:
 
 ```text
-When the session exceeds 20 messages:
-old messages → summary
-last 8 messages → preserved in full
+Quando a sessão passa de 20 mensagens:
+  mensagens antigas → resumo
+  últimas 8 mensagens → preservadas completas
 ```
 
-Conceptual example:
+Exemplo conceitual:
 
 ```text
-M1 to M12  → enter the summary
-M13 to M20 → remain complete in the prompt
-M21         → current user message
+M1 até M12  → entram no resumo
+M13 até M20 → continuam completas no prompt
+M21         → mensagem atual do usuário
 ```
 
-In future turns, the framework can do incremental summarization:
+Em turnos futuros, o framework pode fazer resumo incremental:
 
 ```text
-Previous summary + new old messages → new updated summary
-Latest messages → kept in full
+Resumo anterior + novas mensagens antigas → novo resumo atualizado
+Últimas mensagens → mantidas completas
 ```
 
-### 29.5. What should be preserved in the summary
+### 29.5. O que deve ser preservado no resumo
 
-A good summary is not a generic paraphrase of the conversation. It must preserve useful information for operational continuity.
+Um bom resumo não é uma paráfrase genérica da conversa. Ele deve preservar informações úteis para continuidade operacional.
 
-For corporate agents, preserve:
+Para agentes corporativos, preserve:
 
 ```text
-user's current objective
-relevant channel and session
-active agent/backend
-routing decisions
-current intent and relevant previous intents
-resolved business_context
-canonical identifiers, preferably masked when sensitive
-explicit user confirmations
-actions already performed
-MCP tools called and key evidence
-relevant operational errors
-pending issues and next steps
-domain restrictions already explained
+objetivo atual do usuário
+canal e sessão relevante
+agente/backend ativo
+decisões de roteamento
+intent atual e intents anteriores relevantes
+business_context resolvido
+identificadores canônicos, preferencialmente mascarados quando sensíveis
+confirmações explícitas do usuário
+ações já executadas
+tools MCP chamadas e evidências principais
+erros operacionais relevantes
+pendências e próximos passos
+restrições de domínio já explicadas
 ```
 
-Avoid preserving:
+Evite preservar:
 
 ```text
-huge logs
-complete stack traces
-unnecessary raw payloads
-complete tool responses when a structured summary is sufficient
-unnecessary sensitive data
-redundant or outdated content
+logs enormes
+stack traces completos
+payloads brutos desnecessários
+respostas completas de tools quando um resumo estruturado basta
+dados sensíveis sem necessidade
+conteúdo redundante ou já superado
 ```
 
-### 29.6. Recommended architecture in the framework
+### 29.6. Arquitetura recomendada no framework
 
-The recommended implementation separates raw storage, summary storage, and context assembly.
+A implementação recomendada separa armazenamento bruto, armazenamento do resumo e montagem do contexto.
 
 ```text
 agent_framework/memory/
-├── message_history.py      # current raw memory: append/list
-├── summary_store.py        # summary persistence by session_id
-├── summary_memory.py       # compression rule and context preparation
-└── __init__ .py
+├── message_history.py      # memória bruta atual: append/list
+├── summary_store.py        # persistência do resumo por session_id
+├── summary_memory.py       # regra de compressão e preparação de contexto
+└── __init__.py
 ```
 
-Responsibilities:
+Responsabilidades:
 
 ```text
 ConversationMemory
-Saves and lists raw messages.
+  Salva e lista mensagens brutas.
 
 ConversationSummaryStore
-Saves and retrieves the incremental summary of the session.
+  Salva e recupera o resumo incremental da sessão.
 
 ConversationSummaryMemory
-Decides when to compress, calls the summarizing LLM when enabled,
-preserves recent messages, and returns MemoryContext.
+  Decide quando comprimir, chama o LLM resumidor quando habilitado,
+  preserva mensagens recentes e devolve MemoryContext.
 
 AgentRuntimeMixin.build_messages()
-Injects memory_summary and recent_messages into the final prompt.
+  Injeta memory_summary e recent_messages no prompt final.
 ```
 
-### 29.7. Configuration in `.env`
+### 29.7. Configuração no `.env`
 
-Include these properties in the backend `.env`:
+Inclua estas propriedades no `.env` do backend:
 
 ```env
 ENABLE_CONVERSATION_SUMMARY_MEMORY=true
@@ -7271,21 +7247,21 @@ MEMORY_INJECT_RECENT_MESSAGES=true
 MEMORY_INJECT_SUMMARY=true
 ```
 
-Meaning of the main options:
+Significado das principais opções:
 
-| Setting | Function |
+| Configuração | Função |
 |---|---|
-| `ENABLE_CONVERSATION_SUMMARY_MEMORY` | Turns summary memory on or off |
-| `MEMORY_CONTEXT_STRATEGY` | Defines the strategy: `none`, `window` or `summary` |
-| `MEMORY_HISTORY_LIMIT` | Maximum number of messages loaded from the raw history |
-| `MEMORY_RECENT_MESSAGES_LIMIT` | Number of recent messages preserved in full |
-| `MEMORY_SUMMARY_TRIGGER_MESSAGES` | Number of messages that trigger compression |
-| `MEMORY_MAX_SUMMARY_CHARS` | Approximate maximum summary length |
-| `MEMORY_SUMMARY_USE_LLM` | Uses LLM to summarize; if false, uses deterministic fallback |
-| `MEMORY_INJECT_RECENT_MESSAGES` | Injects recent messages into the prompt |
-| `MEMORY_INJECT_SUMMARY` | Injects accumulated summary into the prompt |
+| `ENABLE_CONVERSATION_SUMMARY_MEMORY` | Liga ou desliga a memória resumida |
+| `MEMORY_CONTEXT_STRATEGY` | Define a estratégia: `none`, `window` ou `summary` |
+| `MEMORY_HISTORY_LIMIT` | Quantidade máxima de mensagens carregadas do histórico bruto |
+| `MEMORY_RECENT_MESSAGES_LIMIT` | Quantidade de mensagens recentes preservadas completas |
+| `MEMORY_SUMMARY_TRIGGER_MESSAGES` | Quantidade de mensagens que dispara compressão |
+| `MEMORY_MAX_SUMMARY_CHARS` | Tamanho máximo aproximado do resumo |
+| `MEMORY_SUMMARY_USE_LLM` | Usa LLM para resumir; se falso, usa fallback determinístico |
+| `MEMORY_INJECT_RECENT_MESSAGES` | Injeta últimas mensagens no prompt |
+| `MEMORY_INJECT_SUMMARY` | Injeta resumo acumulado no prompt |
 
-For local development, a secure configuration is:
+Para desenvolvimento local, uma configuração segura é:
 
 ```env
 ENABLE_CONVERSATION_SUMMARY_MEMORY=true
@@ -7294,7 +7270,7 @@ MEMORY_REPOSITORY_PROVIDER=memory
 LLM_PROVIDER=mock
 ```
 
-For a persistent environment:
+Para ambiente persistente:
 
 ```env
 ENABLE_CONVERSATION_SUMMARY_MEMORY=true
@@ -7303,11 +7279,11 @@ MEMORY_REPOSITORY_PROVIDER=autonomous
 ADB_TABLE_PREFIX=AGENTFW
 ```
 
-### 29.8. Summary persistence
+### 29.8. Persistência do resumo
 
-The summary should not be recalculated from scratch each turn. It must be persisted per session.
+O resumo não deve ser recalculado do zero a cada turno. Ele deve ser persistido por sessão.
 
-Logical model:
+Modelo lógico:
 
 ```text
 session_id
@@ -7319,7 +7295,7 @@ created_at
 updated_at
 ```
 
-Destination examples:
+Exemplos de destino:
 
 ```text
 SQLite  → agent_memory_summaries
@@ -7328,20 +7304,20 @@ MongoDB → memory_summaries
 Memory  → InMemoryConversationSummaryStore
 ```
 
-This separation allows:
+Essa separação permite:
 
 ```text
-full replay using raw history
-light prompt using summary
-investigation/audit using both
-future migration to corporate storage
+replay completo usando histórico bruto
+prompt leve usando resumo
+investigação/auditoria usando ambos
+migração futura para storage corporativo
 ```
 
-### 29.9. Updating the backend `main.py`
+### 29.9. Atualização do `main.py` do backend
 
-The backend must initialize the raw memory and the summarized memory.
+O backend deve inicializar a memória bruta e a memória resumida.
 
-Example:
+Exemplo:
 
 ```python
 from agent_framework.memory.message_history import create_memory
@@ -7367,33 +7343,33 @@ workflow = AgentWorkflow(
 )
 ```
 
-The main point is that `summary_memory` must be created at the same level as the other shared backend engines.
+O ponto principal é que `summary_memory` deve ser criado no mesmo nível dos demais motores compartilhados do backend.
 
-### 29.10. Workflow update
+### 29.10. Atualização do workflow
 
-The workflow must receive `summary_memory` and pass this resource on to the agents.
+O workflow deve receber `summary_memory` e repassar esse recurso para os agentes.
 
-Example:
+Exemplo:
 
 ```python
 class AgentWorkflow:
     def __init__(
-    self,
-    llm,
-    memory,
-    telemetry,
-    analytics,
-    settings,
-    observer=None,
-    tool_router=None,
-    summary_memory=None,
+            self,
+            llm,
+            memory,
+            telemetry,
+            analytics,
+            settings,
+            observer=None,
+            tool_router=None,
+            summary_memory=None,
     ):
         self.llm = llm
         self.memory = memory
         self.summary_memory = summary_memory
 ```
 
-When setting up `agent_kwargs`:
+Ao montar `agent_kwargs`:
 
 ```python
 agent_kwargs = {
@@ -7407,36 +7383,36 @@ agent_kwargs = {
 }
 ```
 
-This way, all agents receive the same summarized memory capacity.
+Assim, todos os agentes recebem a mesma capacidade de memória resumida.
 
-### 29.11. Updating agents
+### 29.11. Atualização dos agentes
 
-Agents that already use `build_messages()` only need to prepare the memory context before assembling the prompt:
+Agentes que já usam `build_messages()` precisam apenas preparar o contexto de memória antes de montar o prompt:
 
 ```python
 await self.prepare_memory_context(state)
 
-    messages = self.build_messages(
-        state,
-        system_prompt=system_prompt,
-        mcp_results=mcp_results,
-        rag_context=rag_context,
-        rag_metadata=rag_metadata,
-    )
+messages = self.build_messages(
+    state,
+    system_prompt=system_prompt,
+    mcp_results=mcp_results,
+    rag_context=rag_context,
+    rag_metadata=rag_metadata,
+)
 ```
 
-Agents that assemble `messages` manually should be adjusted to use `build_messages()` whenever possible.
+Agentes que montam `messages` manualmente devem ser ajustados para usar `build_messages()` sempre que possível.
 
-Before:
+Antes:
 
 ```python
 messages = [
     {"role": "system", "content": system_prompt},
-    {"role": "user", "content": f"Message: {user_text}\nMCP: {tool_context}"},
+    {"role": "user", "content": f"Mensagem: {user_text}\nMCP: {tool_context}"},
 ]
 ```
 
-After:
+Depois:
 
 ```python
 await self.prepare_memory_context(state)
@@ -7450,233 +7426,234 @@ messages = self.build_messages(
 )
 ```
 
-The architectural rule is:
+A regra arquitetural é:
 
 ```text
-We don't compress memory.
-Agent does not duplicate history.
-Agent calls prepare_memory_context().
-Agent uses build_messages().
-Framework injects summary, recent messages, MCP, RAG, and business_context.
+Agente não comprime memória.
+Agente não duplica histórico.
+Agente chama prepare_memory_context().
+Agente usa build_messages().
+Framework injeta resumo, mensagens recentes, MCP, RAG e business_context.
 ```
 
-### 29.12. How the summary appears in the prompt
+### 29.12. Como o resumo aparece no prompt
 
-The final prompt has a structure similar to this:
+O prompt final passa a ter uma estrutura parecida com esta:
 
 ```text
 System:
-You are a specialized corporate agent...
+  Você é um agente corporativo especializado...
 
 User:
-Summary of the conversation so far:
-The user is testing the account agent on the web channel. The session has already been routed to billing_agent, there was an MCP invoice query, and a previous SSE failure.
+  Resumo da conversa até agora:
+  O usuário está testando o agente de contas no canal web. A sessão já passou por
+  roteamento para billing_agent, houve consulta MCP de fatura e uma falha SSE anterior.
 
-Latest messages:
-User: My bill was high.
-Agent: I checked the available data...
-User: Can you explain the additional services?
+  Últimas mensagens:
+  Usuário: Minha fatura veio alta.
+  Agente: Consultei os dados disponíveis...
+  Usuário: Pode explicar os serviços adicionais?
 
-Current user message:
-I want to dispute this item.
+  Mensagem atual do usuário:
+  Quero contestar esse item.
 
-Intent and route chosen by the framework:
-intent=invoice_dispute route=billing_agent
+  Intent e rota escolhidas pelo framework:
+  intent=invoice_dispute route=billing_agent
 
-Business context:
-customer_key=***9999
-contract_key=***1180
+  Contexto de negócio:
+  customer_key=***9999
+  contract_key=***1180
 
-MCP evidence:
-...
+  Evidências MCP:
+  ...
 
-RAG context:
-...
+  Contexto RAG:
+  ...
 ```
 
-This format maintains continuity without sending the entire raw history.
+Esse formato mantém continuidade sem enviar todo o histórico bruto.
 
-### 29.13. Recommended IC/NOC/GRL events
+### 29.13. Eventos IC/NOC/GRL recomendados
 
-For traceability, issue specific memory events.
+Para rastreabilidade, emita eventos específicos de memória.
 
-| Event | When to issue |
+| Evento | Quando emitir |
 |---|---|
-| `IC.MEMORY_CONTEXT_LOADED` | History and summary have been loaded |
-| `IC.MEMORY_COMPRESSION_TRIGGERED` | The configured limit has been reached |
-| `IC.MEMORY_SUMMARY_UPDATED` | The incremental summary has been updated |
-| `IC.MEMORY_CONTEXT_INJECTED` | The prompt received a summary/recent messages |
-| `NOC.MEMORY_SUMMARY_FAILED` | Compression failed and the framework used fallback |
+| `IC.MEMORY_CONTEXT_LOADED` | Histórico e resumo foram carregados |
+| `IC.MEMORY_COMPRESSION_TRIGGERED` | O limite configurado foi atingido |
+| `IC.MEMORY_SUMMARY_UPDATED` | O resumo incremental foi atualizado |
+| `IC.MEMORY_CONTEXT_INJECTED` | O prompt recebeu resumo/mensagens recentes |
+| `NOC.MEMORY_SUMMARY_FAILED` | A compressão falhou e o framework usou fallback |
 
-Payload example:
+Exemplo de payload:
 
 ```json
 {
-    "session_id": "default:billing:s1",
-    "messages_total": 42,
-    "messages_summarized": 30,
-    "recent_messages_kept": 8,
-    "summary_chars": 3840,
-    "strategy": "summary"
+  "session_id": "default:billing:s1",
+  "messages_total": 42,
+  "messages_summarized": 30,
+  "recent_messages_kept": 8,
+  "summary_chars": 3840,
+  "strategy": "summary"
 }
 ```
 
-These events help prove that summarized memory is really working.
+Esses eventos ajudam a provar que a memória resumida está funcionando de verdade.
 
-### 29.14. Minimum functional test
+### 29.14. Teste funcional mínimo
 
-After uploading the backend, run a long conversation using the same `session_id`.
+Depois de subir o backend, execute uma conversa longa usando o mesmo `session_id`.
 
-Example:
+Exemplo:
 
 ```bash
 SESSION_ID="summary-test-001"
 
 for i in $(seq 1 25); do
-curl -s -X POST http://localhost:8000/gateway/message \
+  curl -s -X POST http://localhost:8000/gateway/message \
     -H 'content-type: application/json' \
--d "{\"channel\":\"web\",\"payload\":{\"text\":\"Test message $i about my high bill\",\"session_id\":\"$SESSION_ID\",\"customer_key\":\"11999999999\",\"contract_key\":\"3000131180\"}}" \
+    -d "{\"channel\":\"web\",\"payload\":{\"text\":\"Mensagem de teste $i sobre minha fatura alta\",\"session_id\":\"$SESSION_ID\",\"customer_key\":\"11999999999\",\"contract_key\":\"3000131180\"}}" \
     | jq '.metadata.memory // .memory // .'
 done
 ```
 
-Check:
+Verifique:
 
 ```text
-The same session_id was used in all turns.
-The raw history is still being saved.
-After the configured limit, the summary was created or updated.
-The prompt does not contain the complete history.
-The latest messages remain complete.
-IC.MEMORY_* events appear in observability when enabled.
+O mesmo session_id foi usado em todos os turnos.
+O histórico bruto continua sendo salvo.
+Após o limite configurado, o resumo foi criado ou atualizado.
+O prompt não contém o histórico completo.
+As últimas mensagens continuam completas.
+Eventos IC.MEMORY_* aparecem na observabilidade, quando habilitada.
 ```
 
 ### 29.15. Troubleshooting
 
-| Symptom | Probable cause | Correction |
+| Sintoma | Causa provável | Correção |
 |---|---|---|
-| Summary never appears | `ENABLE_CONVERSATION_SUMMARY_MEMORY=false` | Enable in `.env` |
-| Summary is not injected | `MEMORY_INJECT_SUMMARY=false` or agent does not use `build_messages()` | Enable config and refactor agent |
-| Recent messages do not appear | `MEMORY_INJECT_RECENT_MESSAGES=false` | Enable config |
-| Agent forgets old decisions | Trigger too high or poor summary | Reduce `MEMORY_SUMMARY_TRIGGER_MESSAGES` and improve summary prompt |
-| Prompt was duplicated | Agent still injects history manually | Remove manual history and use `build_messages()` |
-| Latency increased | Summary with LLM throughout the shift | Use incremental summary and only compress when limit is reached |
-| Sensitive data appears in the summary | Lack of masking policy | Mask identifiers before saving/injecting |
+| Resumo nunca aparece | `ENABLE_CONVERSATION_SUMMARY_MEMORY=false` | Ativar no `.env` |
+| Resumo não é injetado | `MEMORY_INJECT_SUMMARY=false` ou agente não usa `build_messages()` | Ativar config e refatorar agente |
+| Últimas mensagens não aparecem | `MEMORY_INJECT_RECENT_MESSAGES=false` | Ativar config |
+| Agente esquece decisões antigas | Trigger alto demais ou resumo ruim | Reduzir `MEMORY_SUMMARY_TRIGGER_MESSAGES` e melhorar prompt de resumo |
+| Prompt ficou duplicado | Agente ainda injeta histórico manualmente | Remover histórico manual e usar `build_messages()` |
+| Latência aumentou | Resumo com LLM em todo turno | Usar resumo incremental e só comprimir quando atingir limite |
+| Dados sensíveis aparecem no resumo | Falta política de mascaramento | Mascarar identificadores antes de salvar/injetar |
 
-### 29.16. Acceptance criteria
+### 29.16. Critério de aceite
 
-Consider the implementation correct when:
+Considere a implementação correta quando:
 
 ```text
-[ ] The backend initializes summary_memory in main.py.
-[ ] The workflow receives and passes summary_memory to the agents.
-[ ] The agents call prepare_memory_context(state).
-[ ] The agents use build_messages() instead of assembling a duplicate manual prompt.
-[ ] The raw history remains persistent.
-[ ] The incremental summary is persisted by session_id.
-[ ] The prompt contains summary + latest messages, but not the entire history.
-[ ] Compression only runs when the configured limit is reached.
-[ ] There is a fallback when the summarizer fails.
-[ ] Memory IC/NOC appear in observability when enabled.
+[ ] O backend inicializa summary_memory no main.py.
+[ ] O workflow recebe e repassa summary_memory aos agentes.
+[ ] Os agentes chamam prepare_memory_context(state).
+[ ] Os agentes usam build_messages() em vez de montar prompt manual duplicado.
+[ ] O histórico bruto continua persistido.
+[ ] O resumo incremental é persistido por session_id.
+[ ] O prompt contém resumo + últimas mensagens, mas não o histórico inteiro.
+[ ] A compressão só roda quando o limite configurado é atingido.
+[ ] Há fallback quando o resumidor falha.
+[ ] IC/NOC de memória aparecem na observabilidade, quando habilitados.
 ```
 
-`ConversationSummaryMemory` should be treated as a framework capability, not as a rule for a specific agent. This way, every new agent inherits conversational continuity, cost control, lower latency, and better standardization.
+`ConversationSummaryMemory` deve ser tratada como uma capacidade do framework, não como uma regra de um agente específico. Dessa forma, todo novo agente herda continuidade conversacional, controle de custo, menor latência e melhor padronização.
+
+--- 
+
+## 30. Retrieval Augmented Generation (RAG)
+
+### 30.1. O que é RAG?
+
+RAG (Retrieval Augmented Generation) é uma arquitetura que permite que um agente consulte documentos corporativos antes de gerar uma resposta.
+
+Sem RAG, o LLM responde apenas com base em seu treinamento.
+
+text Usuário    ↓ LLM    ↓ Resposta
+
+Com RAG, o agente consulta uma base documental antes de chamar o modelo.
+
+text Usuário    ↓ Retriever    ↓ Documentos Relevantes    ↓ LLM    ↓ Resposta Fundamentada
+
+O principal objetivo do RAG é permitir que o agente utilize conhecimento corporativo atualizado sem necessidade de retreinamento do modelo.
 
 ---
 
-## 30. Retrieval-Augmented Generation (RAG)
+### 30.2. Quando usar RAG
 
-### 30.1. What is RAG?
+RAG é indicado quando a resposta depende de conteúdo documental.
 
-RAG (Retrieval Augmented Generation) is an architecture that allows an agent to consult corporate documents before generating a response.
+Exemplos:
 
-Without RAG, the LLM responds based solely on its training.
-
-text User    ↓ LLM    ↓ Response
-
-With RAG, the agent consults a document base before calling the model.
-
-text User    ↓ Retriever    ↓ Relevant Documents    ↓ LLM    ↓ Reasoned Response
-
-The main objective of RAG is to allow the agent to use updated corporate knowledge without the need for model retraining.
-
----
-
-### 30.2. When to use RAG
-
-RAG is indicated when the answer depends on documentary content.
-
-Examples:
-
-- Manuals
-- Procedures
-- Corporate policies
-- Contracts
+- Manuais
+- Procedimentos
+- Políticas corporativas
+- Contratos
 - FAQ
-- Technical documentation
-- Catalogs
-- Regulatory standards
-- Knowledge base
+- Documentação técnica
+- Catálogos
+- Normas regulatórias
+- Base de conhecimento
 
-Typical questions:
+Perguntas típicas:
 
-- What is the cancellation policy?
-- Explain the plan regulations.
-- What does the onboarding procedure say?
-- How does the return process work?
+- Qual é a política de cancelamento?
+- Explique o regulamento do plano.
+- O que diz o procedimento de onboarding?
+- Como funciona o processo de devolução?
 
 ---
 
-### 30.3. When NOT to use RAG
+### 30.3. Quando NÃO usar RAG
 
-RAG does not replace operational inquiries.
+RAG não substitui consultas operacionais.
 
-The cases below should normally use MCP:
+Os casos abaixo normalmente devem utilizar MCP:
 
-- View invoice
-- Check order
-- Check payment
-- Check inventory
-- Check protocol
-- Update registration
-- Open request
-- Perform operational action
+- Consultar fatura
+- Consultar pedido
+- Consultar pagamento
+- Consultar estoque
+- Consultar protocolo
+- Atualizar cadastro
+- Abrir solicitação
+- Executar ação operacional
 
-In these scenarios, the agent needs to consult transactional systems and not documents.
+Nesses cenários, o agente precisa consultar sistemas transacionais e não documentos.
 
 ---
 
 ### 30.4. RAG versus MCP
 
-| Status | MCP | RAG |
+| Situação | MCP | RAG |
 |---|---:|---:|
-| Check payment | ✅ | ❌ |
-| View order | ✅ | ❌ |
-| Check ERP | ✅ | ❌ |
-| Product manual | ❌ | ✅ |
-| Internal procedure | ❌ | ✅ |
-| Regulation | ❌ | ✅ |
-| Corporate policy | ❌ | ✅ |
+| Consultar pagamento | ✅ | ❌ |
+| Consultar pedido | ✅ | ❌ |
+| Consultar ERP | ✅ | ❌ |
+| Manual do produto | ❌ | ✅ |
+| Procedimento interno | ❌ | ✅ |
+| Regulamento | ❌ | ✅ |
+| Política corporativa | ❌ | ✅ |
 
-Rule of thumb:
+Regra prática:
 
-text Systems   → MCP Documents → RAG
-
----
-
-### 30.5. Framework RAG Architecture
-
-The framework separates the document retrieval step from the generation step.
-
-text Document     ↓ Loader     ↓ Chunking     ↓ Embeddings     ↓ Vector Store     ↓ Retriever     ↓ RagService     ↓ AgentRuntimeMixin     ↓ Agent     ↓ LLM
-
-This separation allows components to be swapped without changing the agent implementation.
+text Sistemas   → MCP Documentos → RAG
 
 ---
 
-### 30.6. Framework Components
+### 30.5. Arquitetura RAG do Framework
 
-The framework provides a generic RAG architecture composed of the following elements:
+O framework separa a etapa de recuperação documental da etapa de geração.
+
+text Documento     ↓ Loader     ↓ Chunking     ↓ Embeddings     ↓ Vector Store     ↓ Retriever     ↓ RagService     ↓ AgentRuntimeMixin     ↓ Agente     ↓ LLM
+
+Essa separação permite trocar componentes sem alterar a implementação do agente.
+
+---
+
+### 30.6. Componentes do Framework
+
+O framework disponibiliza uma arquitetura genérica de RAG composta pelos seguintes elementos:
 
 - rag_service
 - retriever
@@ -7684,21 +7661,21 @@ The framework provides a generic RAG architecture composed of the following elem
 - vector_store
 - graph_store
 
-Responsibilities:
+Responsabilidades:
 
-| Component | Responsibility |
+| Componente | Responsabilidade |
 |---|---|
-| RagService | Orchestrates context retrieval |
-| Retriever | Performs vector search |
-| Embedding Provider | Generates embeddings |
-| Vector Store | Stores vectors |
-| Graph Store | Stores relationships for GraphRAG |
+| RagService | Orquestra a recuperação de contexto |
+| Retriever | Executa busca vetorial |
+| Embedding Provider | Gera embeddings |
+| Vector Store | Armazena vetores |
+| Graph Store | Armazena relações para GraphRAG |
 
 ---
 
-### 30.7. Configuration via .env
+### 30.7. Configuração via .env
 
-Example:
+Exemplo:
 
 ```env
 VECTOR_STORE_PROVIDER=sqlite
@@ -7707,63 +7684,63 @@ EMBEDDING_PROVIDER=mock
 RAG_TOP_K=5
 ```
 
-Description:
+Descrição:
 
-| Variable | Function |
+| Variável | Função |
 |---|---|
-| VECTOR_STORE_PROVIDER | Defines the vector database |
-| GRAPH_STORE_PROVIDER | Defines the graph |
-| EMBEDDING_PROVIDER | Defines the embedding provider |
-| RAG_TOP_K | Number of documents retrieved |
-| RAG_ENABLED | Enables or disables RAG |
+| VECTOR_STORE_PROVIDER | Define o banco vetorial |
+| GRAPH_STORE_PROVIDER | Define o grafo |
+| EMBEDDING_PROVIDER | Define o provedor de embeddings |
+| RAG_TOP_K | Quantidade de documentos recuperados |
+| RAG_ENABLED | Habilita ou desabilita RAG |
 
 ---
 
-### 30.8. Indexing Process
+### 30.8. Processo de Indexação
 
-The indexing process takes place before the agent is executed.
+O processo de indexação ocorre antes da execução do agente.
 
 text PDF  ↓ Loader  ↓ Chunking  ↓ Embeddings  ↓ Vector Store
 
-During indexing:
+Durante a indexação:
 
-1. The document is loaded.
-2. The text is divided into chunks.
-3. Embeddings are generated.
-4. The vectors are persisted.
+1. O documento é carregado.
+2. O texto é dividido em chunks.
+3. Embeddings são gerados.
+4. Os vetores são persistidos.
 
 ---
 
 ### 30.9. Chunking
 
-Chunking is the process of dividing the document.
+Chunking é o processo de divisão do documento.
 
-Example:
+Exemplo:
 
 python splitter = RecursiveCharacterTextSplitter(     chunk_size=1000,     chunk_overlap=200, )
 
-Parameters:
+Parâmetros:
 
-| Parameter | Function |
+| Parâmetro | Função |
 |---|---|
-| chunk_size | Maximum chunk size |
-| chunk_overlap | Overlap between chunks |
+| chunk_size | Tamanho máximo do trecho |
+| chunk_overlap | Sobreposição entre chunks |
 
 Trade-off:
 
-Very small text chunks ↓ Little context  Very large chunks ↓ Higher cost and more noise
+text Chunks muito pequenos ↓ Pouco contexto  Chunks muito grandes ↓ Mais custo e mais ruído
 
 ---
 
 ### 30.10. Embeddings
 
-Embeddings transform text into numerical vectors.
+Embeddings transformam texto em vetores numéricos.
 
-OCI example:
+Exemplo OCI:
 
 python embeddings = OCIGenAIEmbeddings(     model_id="cohere.embed-multilingual-v3.0" )
 
-Common providers:
+Provedores comuns:
 
 - OCI Generative AI
 - HuggingFace
@@ -7774,131 +7751,131 @@ Common providers:
 
 ### 30.11. Vector Stores
 
-The framework supports different vector stores.
+O framework suporta diferentes armazenamentos vetoriais.
 
 #### FAISS
 
-Suitable for:
+Indicado para:
 
-- Local development
+- Desenvolvimento local
 - POCs
-- Prototypes
+- Protótipos
 
 #### Oracle Vector Search
 
-Suitable for:
+Indicado para:
 
-- Production
-- Persistence
-- Scalability
+- Produção
+- Persistência
+- Escalabilidade
 - Oracle Autonomous Database
 
 #### MongoDB Atlas Vector Search
 
-Suitable for:
+Indicado para:
 
-- MongoDB environments
-- Cloud-native architectures
+- Ambientes MongoDB
+- Arquiteturas cloud-native
 
 ---
 
 ### 30.12. Retriever
 
-The Retriever performs the vector search.
+O Retriever executa a busca vetorial.
 
-Example:
+Exemplo:
 
 python retriever = vector_store.as_retriever(     search_kwargs={         "k": 5     } )
 
-Flow:
+Fluxo:
 
-text Question  ↓ Question embedding  ↓ Vector search  ↓ Top-K documents
+text Pergunta  ↓ Embedding da pergunta  ↓ Busca vetorial  ↓ Top-K documentos
 
 ---
 
 ### 30.13. RagService
 
-RagService centralizes context retrieval.
+O RagService centraliza a recuperação de contexto.
 
-Simplified example:
+Exemplo simplificado:
 
 python class RagService:     async def retrieve(self, query):         docs = self.retriever.invoke(query)         return "\n".join(             doc.page_content             for doc in docs         )
 
-The agent does not access the retriever directly.
+O agente não acessa o retriever diretamente.
 
-It always uses RagService.
+Ele sempre utiliza o RagService.
 
 ---
 
-### 30.14. Integration with AgentRuntimeMixin
+### 30.14. Integração com AgentRuntimeMixin
 
-Agents typically use:
+Os agentes normalmente utilizam:
 
 python rag_context, rag_metadata = await self._retrieve_rag_context(state)
 
-Internal flow:
+Fluxo interno:
 
 text Agent  ↓ AgentRuntimeMixin  ↓ RagService  ↓ Retriever  ↓ Vector Store
 
-The returned result contains:
+O resultado retornado contém:
 
 - rag_context
 - rag_metadata
 
-Where:
+Onde:
 
-| Field | Description |
+| Campo | Descrição |
 |---|---|
-| rag_context | Retrieved textual content |
-| rag_metadata | Debug and audit information |
+| rag_context | Conteúdo textual recuperado |
+| rag_metadata | Informações de debug e auditoria |
 
 ---
 
-### 30.15. Integrating RAG with the Agent
+### 30.15. Integrando RAG ao Agente
 
-Example:
+Exemplo:
 
-python rag_context, rag_metadata = await self._retrieve_rag_context(state)  messages = [{         "role": "system",         "content": system_prompt,     },     {         "role": "user",         "content": f""" Question: {user_text}  RAG Context: {rag_context} """     }]
+python rag_context, rag_metadata = await self._retrieve_rag_context(state)  messages = [     {         "role": "system",         "content": system_prompt,     },     {         "role": "user",         "content": f""" Pergunta: {user_text}  Contexto RAG: {rag_context} """     } ]
 
-The LLM starts to respond using documentary evidence.
+O LLM passa a responder utilizando evidências documentais.
 
 ---
 
 ### 30.16. RAG + MCP
 
-The framework allows you to use both approaches simultaneously.
+O framework permite utilizar as duas abordagens simultaneamente.
 
-Example:
+Exemplo:
 
-#### Question
+#### Pergunta
 
-text What is the regulation of my plan?
+text Qual o regulamento do meu plano?
 
-Flow:
+Fluxo:
 
 text RAG
 
-#### Question
+#### Pergunta
 
-text What is my account balance?
+text Qual o saldo da minha conta?
 
-Flow:
+Fluxo:
 
 text MCP
 
-#### Question
+#### Pergunta
 
-text Explain the policy and check my bill.
+text Explique o regulamento e consulte minha fatura.
 
-Flow:
+Fluxo:
 
 text RAG + MCP
 
-Architecture:
+Arquitetura:
 
-text User
+text Usuário
 ↓
-Agent
+Agente
 ↓
 ┌─────────────┐
 │ MCP         │
@@ -7907,23 +7884,23 @@ Agent
 ↓
 LLM
 ↓
-Response
+Resposta
 
 ---
 
 ### 30.17. Oracle Vector Search
 
-In corporate environments, Oracle Vector Search is recommended.
+Em ambientes corporativos recomenda-se Oracle Vector Search.
 
-Advantages:
+Vantagens:
 
-- Persistence
-- High availability
+- Persistência
+- Alta disponibilidade
 - Backup
-- Governance
-- Integration with Autonomous Database
+- Governança
+- Integração com Autonomous Database
 
-Example:
+Exemplo:
 
 ```env
 VECTOR_STORE_PROVIDER=oracle
@@ -7934,117 +7911,117 @@ EMBEDDING_PROVIDER=oci
 
 ### 30.18. GraphRAG
 
-GraphRAG adds relationship-based knowledge.
+GraphRAG adiciona conhecimento baseado em relacionamentos.
 
-Architecture:
+Arquitetura:
 
-text Document
+text Documento
 ↓
-Entity Extraction
+Extração de Entidades
 ↓
-Graph
+Grafo
 ↓
-PGQL Query
+Consulta PGQL
 ↓
-Context
+Contexto
 ↓
 LLM
 
-Use cases:
+Casos de uso:
 
-- Dependency mapping
-- Relationships between products
-- Complex catalogs
-- Technical documentation
+- Mapeamento de dependências
+- Relações entre produtos
+- Catálogos complexos
+- Documentação técnica
 
 ---
 
-### 30.19. Observability
+### 30.19. Observabilidade
 
-Recommended events:
+Eventos recomendados:
 
 - IC.RAG_QUERY
 - IC.RAG_DOCUMENTS_FOUND
 - IC.RAG_NO_RESULTS
 - IC.RAG_RESPONSE_GROUNDED
 
-Example:
+Exemplo:
 
 python await self._emit_ic(     "IC.RAG_QUERY",     state,     {"query": user_text}, )
 
 ---
 
-### 30.20. Testing the RAG
+### 30.20. Testando o RAG
 
-Suggested flow:
+Fluxo sugerido:
 
-1. Upload document.
-2. Run indexing.
-3. Start backend.
-4. Ask a question.
-5. Check retrieved context.
-6. Check the generated response.
-7. Check observability.
+1. Carregar documento.
+2. Executar indexação.
+3. Iniciar backend.
+4. Fazer pergunta.
+5. Verificar contexto recuperado.
+6. Verificar resposta gerada.
+7. Verificar observabilidade.
 
 Checklist:
 
-- Did the Retriever find documents?
-- Did Top-K return results?
-- Was the context sent to the LLM?
-- Did the response use evidence?
-- Were the IC events emitted?
+- O Retriever encontrou documentos?
+- O Top-K retornou resultados?
+- O contexto foi enviado ao LLM?
+- A resposta utilizou evidências?
+- Os eventos IC foram emitidos?
 
-If all the answers are positive, the RAG implementation is working correctly.
+Se todas as respostas forem positivas, a implementação RAG está funcionando corretamente.
 
 
-### 30.21. Project Embeddings Generator
+### 30.21. Gerador de Embeddings do Projeto
 
-In addition to runtime retrieval, the project now has an embedding generator to load documents into the RAG before starting agent tests.
+Além da recuperação em tempo de execução, o projeto agora possui um gerador de embeddings para carregar documentos no RAG antes de iniciar os testes do agente.
 
-Main file:
+Arquivo principal:
 
 ```text
 scripts/generate_rag_embeddings.py
 ```
 
-Internal components added to the framework:
+Componentes internos adicionados ao framework:
 
 ```text
 agent_framework/src/agent_framework/rag/embedding_provider.py
 agent_framework/src/agent_framework/rag/ingest.py
 ```
 
-Responsibilities:
+Responsabilidades:
 
-| File | Responsibility |
+| Arquivo | Responsabilidade |
 |---|---|
-| `embedding_provider.py` | Creates the `mock` or `oci` embedding provider |
-| `ingest.py` | Reads documents, breaks them into chunks, generates metadata, and saves them in the vector store |
-| `generate_rag_embeddings.py` | Operational CLI for indexing project documents |
+| `embedding_provider.py` | Cria o provedor de embeddings `mock` ou `oci` |
+| `ingest.py` | Lê documentos, quebra em chunks, gera metadados e salva no vector store |
+| `generate_rag_embeddings.py` | CLI operacional para indexar documentos do projeto |
 
-Operational flow:
+Fluxo operacional:
 
 ```text
-Documents in ./docs
-↓
-File loader
-↓
+Documentos em ./docs
+        ↓
+Loader de arquivos
+        ↓
 Chunking
-↓
+        ↓
 Embedding Provider
-↓
+        ↓
 Vector Store
-↓
+        ↓
 RagService.retrieve()
-↓
+        ↓
 AgentRuntimeMixin._retrieve_rag_context()
 ```
 
 ---
 
-### 30.22. Embedding Generator Configuration
+### 30.22. Configuração do Gerador de Embeddings
 
-The main variables are in the `.env`:
+As variáveis principais ficam no `.env`:
 
 ```env
 VECTOR_STORE_PROVIDER=sqlite
@@ -8052,7 +8029,7 @@ GRAPH_STORE_PROVIDER=memory
 RAG_TOP_K=5
 RAG_NAMESPACE=default
 RAG_DOCS_DIR=./docs
-RAG_FILE_GLOBS=* .md,* .txt,* .yaml,* .yml,*.json
+RAG_FILE_GLOBS=*.md,*.txt,*.yaml,*.yml,*.json
 RAG_CHUNK_SIZE=1200
 RAG_CHUNK_OVERLAP=200
 EMBEDDING_PROVIDER=mock
@@ -8061,21 +8038,21 @@ OCI_EMBEDDING_MODEL=cohere.embed-multilingual-v3.0
 OCI_EMBEDDING_ENDPOINT=
 ```
 
-Description:
+Descrição:
 
-| Variable | Description |
+| Variável | Descrição |
 |---|---|
-| `VECTOR_STORE_PROVIDER` | Defines where the chunks and vectors will be stored |
-| `RAG_DOCS_DIR` | Directory where documents will be read |
-| `RAG_NAMESPACE` | Namespace used to separate knowledge bases |
-| `RAG_FILE_GLOBS` | Types of files read by the indexer |
-| `RAG_CHUNK_SIZE` | Maximum size of each chunk |
-| `RAG_CHUNK_OVERLAP` | Overlap between chunks |
-| `EMBEDDING_PROVIDER` | Embeddings provider: `mock` or `OCI` |
-| `OCI_EMBEDDING_MODEL` | Embeddings model used in OCI |
-| `OCI_EMBEDDING_ENDPOINT` | Optional endpoint for OCI embeddings |
+| `VECTOR_STORE_PROVIDER` | Define onde os chunks e vetores serão armazenados |
+| `RAG_DOCS_DIR` | Diretório onde os documentos serão lidos |
+| `RAG_NAMESPACE` | Namespace usado para separar bases de conhecimento |
+| `RAG_FILE_GLOBS` | Tipos de arquivos lidos pelo indexador |
+| `RAG_CHUNK_SIZE` | Tamanho máximo de cada chunk |
+| `RAG_CHUNK_OVERLAP` | Sobreposição entre chunks |
+| `EMBEDDING_PROVIDER` | Provedor de embeddings: `mock` ou `oci` |
+| `OCI_EMBEDDING_MODEL` | Modelo de embeddings usado na OCI |
+| `OCI_EMBEDDING_ENDPOINT` | Endpoint opcional para embeddings OCI |
 
-For persistent local development, use:
+Para desenvolvimento local persistente, use:
 
 ```env
 VECTOR_STORE_PROVIDER=sqlite
@@ -8083,7 +8060,7 @@ EMBEDDING_PROVIDER=mock
 SQLITE_DB_PATH=./data/agent_framework.db
 ```
 
-For production with Oracle Autonomous Database / Oracle Vector Search, use:
+Para produção com Oracle Autonomous Database / Oracle Vector Search, use:
 
 ```env
 VECTOR_STORE_PROVIDER=autonomous
@@ -8093,34 +8070,34 @@ OCI_REGION=sa-saopaulo-1
 OCI_EMBEDDING_MODEL=cohere.embed-multilingual-v3.0
 ```
 
-Important note:
+Observação importante:
 
 ```text
-VECTOR_STORE_PROVIDER=memory is not recommended for indexing via script,
-because the content remains only in the memory of the process that executed the script.
-For reusable local tests, use VECTOR_STORE_PROVIDER=sqlite.
+VECTOR_STORE_PROVIDER=memory não é recomendado para indexação via script,
+porque o conteúdo fica apenas na memória do processo que executou o script.
+Para testes locais reutilizáveis, prefira VECTOR_STORE_PROVIDER=sqlite.
 ```
 
 ---
 
-### 30.23. How to Upload Documents to RAG
+### 30.23. Como Carregar Documentos no RAG
 
-Create the document directory:
+Crie o diretório de documentos:
 
 ```bash
 mkdir -p docs
 ```
 
-Copy the documents to this directory:
+Copie os documentos para esse diretório:
 
 ```text
 docs/
-identity_yaml_chapter_14_1_1_en.md
-business_context_framework_translated_en.md
-manual_operacional.md
+  identity_yaml_chapter_14_1_1_en.md
+  business_context_framework_translated_en.md
+  manual_operacional.md
 ```
 
-Run the generator:
+Execute o gerador:
 
 ```bash
 python scripts/generate_rag_embeddings.py \
@@ -8128,63 +8105,63 @@ python scripts/generate_rag_embeddings.py \
   --namespace default
 ```
 
-Example with chunking adjustments:
+Exemplo com ajustes de chunking:
 
 ```bash
 python scripts/generate_rag_embeddings.py \
   --docs-dir ./docs \
---namespace telecom_contas \
+  --namespace telecom_contas \
   --chunk-size 1200 \
   --chunk-overlap 200 \
-  --globs "*.md,* .txt,*.yaml"
+  --globs "*.md,*.txt,*.yaml"
 ```
 
-Expected output:
+Saída esperada:
 
 ```text
 RAG embedding generation completed
-namespace:      telecom_contas
-files read:     3
-chunks created: 42
-documents saved: 42
+  namespace:      telecom_contas
+  files read:     3
+  chunks created: 42
+  documents saved:42
 ```
 
 ---
 
-### 30.24. How the Script Works Internally
+### 30.24. Como o Script Funciona Internamente
 
-The script performs these steps:
+O script executa estas etapas:
 
 ```text
-1. Loads settings from .env
-2. Reads documents from RAG_DOCS_DIR or --docs-dir
-3. Filters files using RAG_FILE_GLOBS or --globs
-4. Divides the text into chunks
-5. Creates metadata per chunk
-6. Generates embeddings using EMBEDDING_PROVIDER
-7. Saves chunks and vectors to the configured Vector Store
-   ```
+1. Carrega settings a partir do .env
+2. Lê documentos de RAG_DOCS_DIR ou --docs-dir
+3. Filtra arquivos usando RAG_FILE_GLOBS ou --globs
+4. Divide o texto em chunks
+5. Cria metadados por chunk
+6. Gera embeddings usando EMBEDDING_PROVIDER
+7. Salva chunks e vetores no Vector Store configurado
+```
 
-Metadata written by chunk:
+Metadados gravados por chunk:
 
 ```json
 {
-    "source": "manual_operacional.md",
-    "file_name": "manual_operacional.md",
-    "path": "/absolute/path/docs/manual_operacional.md",
-    "chunk_index": 1,
-    "chunk_total": 10,
-    "content_sha256": "..."
+  "source": "manual_operacional.md",
+  "file_name": "manual_operacional.md",
+  "path": "/caminho/absoluto/docs/manual_operacional.md",
+  "chunk_index": 1,
+  "chunk_total": 10,
+  "content_sha256": "..."
 }
 ```
 
-This metadata helps with auditing, debugging, traceability, and source display.
+Esses metadados ajudam em auditoria, debug, rastreabilidade e exibição de fontes.
 
 ---
 
-### 30.25. Embedding Providers
+### 30.25. Provedores de Embeddings
 
-The framework now has a provider factory:
+O framework agora possui uma fábrica de provedores:
 
 ```python
 from agent_framework.rag.embedding_provider import create_embedding_provider
@@ -8192,22 +8169,22 @@ from agent_framework.rag.embedding_provider import create_embedding_provider
 embedding_provider = create_embedding_provider(settings)
 ```
 
-Available providers:
+Provedores disponíveis:
 
-| Provider | Recommended use |
+| Provedor | Uso recomendado |
 |---|---|
-| `mock` | Local development, testing and pipeline validation |
-| `oci` | Corporate environments and production |
+| `mock` | Desenvolvimento local, testes e validação do pipeline |
+| `oci` | Ambientes corporativos e produção |
 
-The `mock` provider generates deterministic vectors locally. It should not be used for real semantic quality, but it is useful for validating ingestion, persistence, and RAG flow without relying on external calls.
+O provedor `mock` gera vetores determinísticos localmente. Ele não deve ser usado para qualidade semântica real, mas é útil para validar ingestão, persistência e fluxo RAG sem depender de chamadas externas.
 
-The `oci` provider uses OCI Generative AI to generate real embeddings and should be used when the RAG needs corporate semantic search.
+O provedor `oci` usa OCI Generative AI para gerar embeddings reais e deve ser usado quando o RAG precisa de busca semântica corporativa.
 
 ---
 
-### 30.26. Integration with the Workflow
+### 30.26. Integração com o Workflow
 
-The backend workflow now creates the embedding provider and injects this provider into the `RagService`:
+O workflow do backend agora cria o embedding provider e injeta esse provider no `RagService`:
 
 ```python
 from agent_framework.rag.embedding_provider import create_embedding_provider
@@ -8215,56 +8192,56 @@ from agent_framework.rag.rag_service import RagService
 
 self.embedding_provider = create_embedding_provider(settings)
 self.rag_service = RagService(
-settings,
-embedding_provider=self.embedding_provider,
-telemetry=telemetry,
+    settings,
+    embedding_provider=self.embedding_provider,
+    telemetry=telemetry,
 )
 ```
 
-This way, the runtime retrieval uses the same provider configured in the indexing.
+Com isso, a recuperação em tempo de execução usa o mesmo provedor configurado na indexação.
 
-Flow at question time:
+Fluxo em tempo de pergunta:
 
 ```text
-User asks question
-↓
+Usuário faz pergunta
+        ↓
 AgentRuntimeMixin._retrieve_rag_context(state)
-↓
+        ↓
 RagService.retrieve(query, namespace)
-↓
-Question embedding
-↓
-Vector search
-↓
+        ↓
+Embedding da pergunta
+        ↓
+Busca vetorial
+        ↓
 Top-K chunks
-↓
-RAG context in the prompt
-↓
-LLM responds with reasoning
+        ↓
+Contexto RAG no prompt
+        ↓
+LLM responde fundamentado
 ```
 
 ---
 
-### 30.27. Generator Validation Checklist
+### 30.27. Checklist de Validação do Gerador
 
-After running the script, validate:
+Após executar o script, valide:
 
-- The `docs/`directory contains the expected files.
-- The `.env` uses `VECTOR_STORE_PROVIDER=sqlite` or `autonomous`.
-- The namespace used in the script is the same namespace used by the agent.
-- The script reported `chunks created` greater than zero.
-- The SQLite or Oracle database received records in `rag_documents` or `AGENTFW_RAG_DOCUMENT`.
-- The agent calls`_retrieve_rag_context(state)`.
-- The agent's return includes `rag_metadata.document_count` greater than zero when the question finds context.
+- O diretório `docs/` contém os arquivos esperados.
+- O `.env` usa `VECTOR_STORE_PROVIDER=sqlite` ou `autonomous`.
+- O namespace usado no script é o mesmo namespace usado pelo agente.
+- O script informou `chunks created` maior que zero.
+- O banco SQLite ou Oracle recebeu registros em `rag_documents` ou `AGENTFW_RAG_DOCUMENT`.
+- O agente chama `_retrieve_rag_context(state)`.
+- O retorno do agente inclui `rag_metadata.document_count` maior que zero quando a pergunta encontra contexto.
 
-Quick query in SQLite:
+Consulta rápida no SQLite:
 
 ```bash
 sqlite3 ./data/agent_framework.db \
-"select namespace, count(*) from rag_documents group by namespace;"
+  "select namespace, count(*) from rag_documents group by namespace;"
 ```
 
-Quick query in Oracle:
+Consulta rápida no Oracle:
 
 ```sql
 select namespace, count(*)
@@ -8274,147 +8251,147 @@ group by namespace;
 
 ---
 ---
-## 31. Conclusion
+## 31. Conclusão
 
-The `agent_template_backend` provides the corporate backbone for new agents. The implementation of a new agent should be limited to the domain: prompts, rules, tools, clients, schemas, and specific decisions.
+O `agent_template_backend` fornece a espinha dorsal corporativa para novos agentes. A implementação de um agente novo deve se limitar ao domínio: prompts, regras, tools, clients, schemas e decisões específicas.
 
-The correct standard is:
-
-```text
-Framework = reusable engine
-Agent = business customization
-MCP = standardized boundary with external systems
-Config YAML = changeable behavior without touching the engine
-IC/NOC/GRL = corporate traceability
-```
-
-A developer should not just copy files. They must understand that each change represents an architectural decision:
+O padrão correto é:
 
 ```text
-Create agent       → defines the domain logic.
-Register workflow → makes the agent executable by LangGraph.
-Adjust state      → shares data between nodes.
-Configure agents  → declares the agent to the framework.
-Configure routing → teaches the framework when to call the agent.
-Configure tools   → declares external capabilities.
-Configure MCP     → connects tools to systems or mocks.
-Configure identity → normalizes business keys.
-Issue IC/NOC/GRL  → makes the execution auditable.
-Test gateway     → validates the actual end-to-end flow.
+Framework = motor reutilizável
+Agente = customização de negócio
+MCP = fronteira padronizada com sistemas externos
+Config YAML = comportamento alterável sem mexer no motor
+IC/NOC/GRL = rastreabilidade corporativa
 ```
 
-Following this model, new agents can be created with simpler standardization, scalability, traceability, and maintenance.
+Um desenvolvedor não deve apenas copiar arquivos. Ele deve entender que cada alteração representa uma decisão arquitetural:
+
+```text
+Criar agente       → define a lógica de domínio.
+Registrar workflow → torna o agente executável pelo LangGraph.
+Ajustar state      → compartilha dados entre nós.
+Configurar agents  → declara o agente para o framework.
+Configurar routing → ensina o framework quando chamar o agente.
+Configurar tools   → declara capacidades externas.
+Configurar MCP     → conecta tools a sistemas ou mocks.
+Configurar identity→ normaliza chaves de negócio.
+Emitir IC/NOC/GRL  → torna a execução auditável.
+Testar gateway     → valida o fluxo real fim a fim.
+```
+
+Seguindo esse modelo, novos agentes podem ser criados com padronização, escalabilidade, rastreabilidade e manutenção mais simples.
 
 
-## 32. Final delivery with Agent Gateway
+## 32. Entrega final com Agent Gateway
 
-At the end of the implementation, the recommended delivery should contain four clearly separated projects or directories:
+Ao final da implementação, a entrega recomendada deve conter quatro projetos ou diretórios claramente separados:
 
 ```text
 agent_framework/
-reusable library with workflow engines, routing, guardrails,
-judges, supervisor, memory, checkpoint, observability and MCP tool router
+  biblioteca reutilizável com motores de workflow, routing, guardrails,
+  judges, supervisor, memória, checkpoint, observabilidade e MCP tool router
 
 agent_template_backend/
-specialized backend of an agent, with domain, prompts, tools,
-state, workflow and its own configurations
+  backend especializado de um agente, com domínio, prompts, tools,
+  state, workflow e configurações próprias
 
 agent_gateway/
-global supervisor that routes conversations between multiple agent backends
+  global supervisor que roteia conversas entre vários backends de agentes
 
 agent_frontend/
-Web, WhatsApp or Voice interface that talks to the Agent Gateway
+  interface Web, WhatsApp ou Voz que conversa com o Agent Gateway
 ```
 
-The correct relationship is:
+A relação correta é:
 
 ```text
 Frontend
-calls Agent Gateway
+  chama Agent Gateway
 
 Agent Gateway
-chooses the backend
+  escolhe o backend
 
-Agent backend
-executes the specialized workflow
+Backend do agente
+  executa o workflow especializado
 
 MCP Server
-runs or simulates business tools
+  executa ou simula ferramentas de negócio
 
 Framework
-provides reusable engines for gateway and backends
+  fornece os motores reutilizáveis para gateway e backends
 ```
 
-### 32.1. Final local upload sequence
+### 32.1. Sequência final de subida local
 
-A complete local sequence can be:
+Uma sequência local completa pode ser:
 
 ```bash
-# 1. Upload agent MCP, if any
-cd mcp_servers/my_agent_mcp
+# 1. Subir MCP do agente, se existir
+cd mcp_servers/meu_agente_mcp
 python -m uvicorn app.main:app --host 0.0.0.0 --port 9001 --reload
 
-# 2. Upload the Accounts agent backend
+# 2. Subir backend do agente Contas
 cd agent_template_backend
 cp .env.example .env
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
-# 3. Upload Agent Gateway
+# 3. Subir Agent Gateway
 cd agent_gateway
 cp .env.example .env
 export PYTHONPATH=../agent_framework/src:.
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 
-# 4. Upload frontend
+# 4. Subir frontend
 cd agent_frontend
 npm install
 npm run dev
 ```
 
-### 32.2. Final test sequence
+### 32.2. Sequência final de testes
 
 ```bash
-# Live gateway
+# Gateway vivo
 curl http://localhost:8010/health
 
-# Registered backends
+# Backends registrados
 curl http://localhost:8010/backends
 
-# Backend health
+# Saúde dos backends
 curl http://localhost:8010/backends/health
 
-# Route decision
+# Decisão de rota
 curl -X POST http://localhost:8010/debug/route \
   -H 'content-type: application/json' \
--d '{"channel":"web","payload":{"text":"My bill was high","session_id":"s1"}}'
+  -d '{"channel":"web","payload":{"text":"Minha fatura veio alta","session_id":"s1"}}'
 
-# Real end-to-end message
+# Mensagem real ponta a ponta
 curl -X POST http://localhost:8010/gateway/message \
   -H 'content-type: application/json' \
--d '{"channel":"web","payload":{"text":"My bill was high","session_id":"s1","msisdn":"11999999999"}}'
+  -d '{"channel":"web","payload":{"text":"Minha fatura veio alta","session_id":"s1","msisdn":"11999999999"}}'
 
-# Global sessions
+# Sessões globais
 curl http://localhost:8010/debug/sessions
 
-# SSE via Gateway
+# SSE pelo Gateway
 curl -N http://localhost:8010/gateway/events/s1
 ```
 
-### 32.3. Architectural acceptance criteria
+### 32.3. Critério de aceite arquitetural
 
-The implementation is architecturally correct when:
+A implementação está arquiteturalmente correta quando:
 
 ```text
-[ ] the frontend does not know individual URLs of the agent backends;
-[ ] the Gateway does not contain a specific business rule for billing, offers or support;
-[ ] each backend remains independent;
-[ ] each backend uses the framework engines;
-[ ] the Gateway uses the framework's GlobalSupervisorRouter;
-[ ] global routing is observable;
-[ ] each backend change generates metadata and a handoff event;
-[ ] the MCP servers remain pluggable by backend/agent;
-[ ] the global session and the backend session are preserved in the metadata;
-[ ] the developer can test the route before testing the actual execution.
+[ ] o frontend não conhece URLs individuais dos backends de agentes;
+[ ] o Gateway não contém regra de negócio específica de fatura, oferta ou suporte;
+[ ] cada backend continua independente;
+[ ] cada backend usa os motores do framework;
+[ ] o Gateway usa o GlobalSupervisorRouter do framework;
+[ ] o roteamento global é observável;
+[ ] cada troca de backend gera metadados e evento de handoff;
+[ ] os MCP servers continuam plugáveis por backend/agente;
+[ ] a sessão global e a sessão do backend são preservadas no metadata;
+[ ] o desenvolvedor consegue testar rota antes de testar execução real.
 ```
 
-With this design, adding a new agent does not require rewriting the frontend or copying logic between backends. The developer creates the specialized backend, registers it in the Agent Gateway, and lets the framework take care of the cross-cutting engines.
+Com esse desenho, adicionar um novo agente não exige reescrever o frontend nem copiar lógica entre backends. O desenvolvedor cria o backend especializado, registra no Agent Gateway e deixa o framework cuidar dos motores transversais.
