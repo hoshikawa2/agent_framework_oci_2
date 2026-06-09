@@ -329,7 +329,522 @@ LANGFUSE_PUBLIC_KEY=<public-key>
 LANGFUSE_SECRET_KEY=<secret-key>
 LANGFUSE_HOST=http://localhost:3005
 ```
+---
 
+### 4.2.`llm_profiles.yaml`
+
+### 4.2.1. Objetivo do `llm_profiles.yaml`
+
+O arquivo `llm_profiles.yaml` serve para configurar, de forma centralizada e granular, qual modelo LLM cada parte do framework deve usar.
+
+Sem esse arquivo, normalmente o framework usa um único modelo definido no `.env`, por exemplo:
+
+```env
+LLM_PROVIDER=oci_openai
+OCI_GENAI_MODEL=openai.gpt-4.1
+LLM_TEMPERATURE=0.2
+LLM_MAX_TOKENS=2048
+```
+
+Isso significa que supervisor, router, agentes, RAG, memória, guardrails e judges acabam usando o mesmo modelo padrão, salvo alguma configuração específica no código.
+
+Com o `llm_profiles.yaml`, cada ponto de inferência pode usar um modelo diferente, com parâmetros próprios.
+
+Exemplo:
+
+```yaml
+profiles:
+  default:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0.2
+    max_tokens: 2048
+
+  guardrail:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 600
+
+  judge:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 800
+
+  rag_generation:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0.1
+    max_tokens: 1800
+```
+
+---
+
+### 4.2.2. Por que esse arquivo é importante
+
+Em um framework de agentes corporativos, nem todo componente precisa usar o mesmo modelo.
+
+Por exemplo:
+
+- O agente principal pode usar um modelo mais criativo.
+- O supervisor pode usar temperatura `0` para roteamento mais previsível.
+- Guardrails devem ser mais rígidos e determinísticos.
+- Judges devem avaliar respostas com baixa variabilidade.
+- RAG pode usar modelos diferentes para reescrita, compressão e geração.
+- Memória pode usar um modelo barato ou mais curto para resumo.
+
+O `llm_profiles.yaml` permite separar essas responsabilidades.
+
+---
+
+### 4.2.3. Regra geral de funcionamento
+
+A regra esperada do framework é:
+
+```text
+Se llm_profiles.yaml existir:
+  o framework usa os profiles definidos nele para cada componente.
+
+Se llm_profiles.yaml não existir:
+  o framework mantém o comportamento antigo e usa o .env como configuração global.
+```
+
+Ou seja, o `llm_profiles.yaml` é opcional.
+
+Ele não substitui completamente o `.env`. Ele funciona como uma camada de override por componente.
+
+---
+
+### 4.2.4. Quando o arquivo NÃO existe
+
+Se o arquivo `llm_profiles.yaml` não existir, o framework deve usar somente as configurações globais do `.env`.
+
+Exemplo:
+
+```env
+LLM_PROVIDER=oci_openai
+OCI_GENAI_MODEL=openai.gpt-4.1
+LLM_TEMPERATURE=0.2
+LLM_MAX_TOKENS=2048
+```
+
+Nesse cenário, todos os componentes que usam LLM tendem a usar o mesmo provider/modelo global:
+
+```text
+supervisor      -> .env
+router          -> .env
+guardrails LLM  -> .env
+judges LLM      -> .env
+rag             -> .env
+memory summary  -> .env
+agents          -> .env
+```
+
+Esse modo é útil para ambientes simples, provas de conceito ou quando ainda não se quer controlar modelos por componente.
+
+---
+
+### 4.2.5. Quando o arquivo existe
+
+Se o arquivo `llm_profiles.yaml` existir, o framework passa a procurar um profile específico para cada ponto de inferência.
+
+Exemplo:
+
+```yaml
+profiles:
+  supervisor:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 700
+
+  judge:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 800
+```
+
+Quando o supervisor chamar LLM, ele deve usar o profile `supervisor`.
+
+Quando um judge LLM chamar LLM, ele deve usar o profile `judge`.
+
+---
+
+### 4.2.6. Relação entre `default` e profiles específicos
+
+O profile `default` funciona como base.
+
+Exemplo:
+
+```yaml
+profiles:
+  default:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0.2
+    max_tokens: 2048
+
+  supervisor:
+    temperature: 0
+    max_tokens: 700
+```
+
+Nesse caso, se o resolver suportar herança, o profile `supervisor` pode herdar `provider` e `model` do `default`, alterando apenas `temperature` e `max_tokens`.
+
+Porém, para evitar ambiguidade, a configuração mais segura é declarar `provider` e `model` explicitamente em todos os profiles:
+
+```yaml
+supervisor:
+  provider: oci_openai
+  model: openai.gpt-4.1
+  temperature: 0
+  max_tokens: 700
+```
+
+Esse é o formato recomendado.
+
+---
+
+### 4.2.7. Profiles principais do framework
+
+Abaixo estão os profiles mais comuns:
+
+| Profile | Uso |
+|---|---|
+| `default` | Configuração base/fallback |
+| `supervisor` | Decisão de próximo agente ou fluxo |
+| `router` | Roteamento por intenção ou política |
+| `guardrail` | Guardrails de entrada ou segurança geral |
+| `grl` | Guardrails de saída e regras de resposta |
+| `judge` | Judges LLM, como qualidade e groundedness |
+| `rag_rewriter` | Reescrita de pergunta para RAG |
+| `rag_compressor` | Compressão de contexto recuperado |
+| `rag_generation` | Geração final usando contexto RAG |
+| `summary_memory` | Resumo de memória conversacional |
+| `noc` | Análise operacional/NOC |
+| `billing_agent` | Modelo específico do agente de contas/faturas |
+| `product_agent` | Modelo específico do agente de produtos |
+| `backoffice_agent` | Modelo específico do agente de backoffice |
+
+---
+
+### 4.2.8. Guardrails e `llm_profiles.yaml`
+
+Os guardrails podem ser determinísticos ou baseados em LLM.
+
+Guardrails determinísticos não precisam chamar modelo. Por isso, mesmo que o profile `guardrail` esteja com modelo errado, um rail puramente determinístico pode bloquear antes de chegar no LLM.
+
+Exemplo:
+
+```yaml
+guardrail:
+  provider: oci_openai
+  model: xopenai.gpt-4.1
+```
+
+Se o texto disparar um padrão determinístico de prompt injection, o erro de modelo pode não aparecer, porque o LLM não foi chamado.
+
+Para validar se o profile está sendo usado, é preciso testar um guardrail que realmente chame LLM.
+
+Exemplos de profiles usados:
+
+```text
+guardrail -> PINJ, TOX, OOS, DLEX_IN, RAGSEC
+grl       -> REVPREC, AOFERTA, DLEX_OUT
+```
+
+---
+
+### 4.2.9. Judges e `llm_profiles.yaml`
+
+O `judges.yaml` define quais judges existem e se estão habilitados.
+
+Exemplo:
+
+```yaml
+judges:
+  - name: response_quality
+    enabled: true
+    threshold: 0.7
+
+  - name: groundedness
+    enabled: true
+    threshold: 0.6
+```
+
+Se esses judges forem calibrados como LLM, eles usarão o profile `judge` do `llm_profiles.yaml`.
+
+Exemplo:
+
+```yaml
+judge:
+  provider: oci_openai
+  model: openai.gpt-4.1
+  temperature: 0
+  max_tokens: 800
+```
+
+O ponto importante é:
+
+```text
+judges.yaml       -> define quais judges executam e suas regras
+llm_profiles.yaml -> define qual modelo o judge LLM usa
+```
+
+Se o modelo do profile `judge` estiver errado e o judge LLM for executado, o framework deve falhar conforme a política configurada no próprio `judges.yaml`, por exemplo `fail_closed`.
+
+---
+
+### 4.2.10. RAG e `llm_profiles.yaml`
+
+O RAG pode usar LLM em diferentes etapas:
+
+```text
+rag_rewriter    -> reescreve a pergunta do usuário
+rag_compressor  -> comprime documentos/contexto recuperado
+rag_generation  -> gera a resposta final fundamentada
+```
+
+Exemplo:
+
+```yaml
+rag_rewriter:
+  provider: oci_openai
+  model: openai.gpt-4.1
+  temperature: 0
+  max_tokens: 300
+
+rag_compressor:
+  provider: oci_openai
+  model: openai.gpt-4.1
+  temperature: 0
+  max_tokens: 1200
+
+rag_generation:
+  provider: oci_openai
+  model: openai.gpt-4.1
+  temperature: 0.1
+  max_tokens: 1800
+```
+
+Isso permite usar modelos diferentes para tarefas diferentes do pipeline RAG.
+
+---
+
+### 4.2.11. Memória e `llm_profiles.yaml`
+
+A memória de resumo, quando usa LLM, deve usar o profile `summary_memory`.
+
+Exemplo:
+
+```yaml
+summary_memory:
+  provider: oci_openai
+  model: openai.gpt-4.1
+  temperature: 0.1
+  max_tokens: 1200
+```
+
+Esse profile é usado quando o framework precisa resumir conversas longas, compactar histórico ou manter memória conversacional sem carregar todas as mensagens anteriores.
+
+---
+
+### 4.2.12. Supervisor e router
+
+O supervisor e o router são pontos críticos de controle de fluxo.
+
+Exemplo:
+
+```yaml
+supervisor:
+  provider: oci_openai
+  model: openai.gpt-4.1
+  temperature: 0
+  max_tokens: 700
+
+router:
+  provider: oci_openai
+  model: openai.gpt-4.1
+  temperature: 0
+  max_tokens: 500
+```
+
+Normalmente eles usam temperatura `0`, porque a decisão de rota precisa ser previsível.
+
+---
+
+### 4.2.13. Exemplo completo recomendado
+
+```yaml
+profiles:
+  default:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0.2
+    max_tokens: 2048
+
+  supervisor:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 700
+
+  router:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 500
+
+  guardrail:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 600
+
+  grl:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 700
+
+  judge:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 800
+
+  rag_rewriter:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 300
+
+  rag_compressor:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 1200
+
+  rag_generation:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0.1
+    max_tokens: 1800
+
+  summary_memory:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0.1
+    max_tokens: 1200
+
+  noc:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0
+    max_tokens: 700
+
+  billing_agent:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0.2
+
+  product_agent:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0.2
+
+  backoffice_agent:
+    provider: oci_openai
+    model: openai.gpt-4.1
+    temperature: 0.2
+```
+
+---
+
+### 4.2.14. Como testar se o profile está sendo respeitado
+
+Uma forma simples de testar é colocar propositalmente um modelo inexistente em um profile específico.
+
+Exemplo:
+
+```yaml
+judge:
+  provider: oci_openai
+  model: xopenai.gpt-4.1
+  temperature: 0
+  max_tokens: 800
+```
+
+Depois, execute um fluxo que realmente chame um judge LLM.
+
+Se o framework estiver respeitando o profile, a chamada deve falhar, porque o modelo não existe.
+
+O mesmo teste pode ser feito com:
+
+```text
+guardrail
+ grl
+ rag_rewriter
+ rag_compressor
+ rag_generation
+ summary_memory
+ supervisor
+ router
+ billing_agent
+```
+
+Mas é preciso garantir que o componente seja realmente executado no fluxo.
+
+---
+
+### 4.2.15. Atenção sobre fallback silencioso
+
+Um ponto importante em arquiteturas de agentes é evitar fallback silencioso quando um profile explícito foi configurado.
+
+Se o usuário configurou:
+
+```yaml
+judge:
+  provider: oci_openai
+  model: xopenai.gpt-4.1
+```
+
+então o framework não deve ignorar o erro e cair automaticamente para outro modelo, a menos que isso esteja explicitamente configurado.
+
+A regra recomendada é:
+
+```text
+profile explícito + provider real + modelo inválido = erro visível
+```
+
+Isso evita situações em que o time acredita estar testando um modelo, mas o framework está usando outro silenciosamente.
+
+---
+
+### 4.2.16. Resumo final
+
+O `llm_profiles.yaml` é a camada de configuração por componente do framework.
+
+Ele permite:
+
+- Separar modelos por função.
+- Usar temperaturas diferentes por componente.
+- Testar modelos específicos em pontos específicos.
+- Evitar que tudo dependa de um único modelo global no `.env`.
+- Tornar o comportamento de guardrails, judges, RAG, memória, supervisor e agentes mais controlável.
+
+Regra principal:
+
+```text
+Sem llm_profiles.yaml:
+  .env governa tudo.
+
+Com llm_profiles.yaml:
+  cada componente usa seu profile.
+  o .env fica como fallback para chaves ausentes ou para o modo legado.
+```
 
 ---
 
@@ -2505,11 +3020,38 @@ Judges avaliam qualidade, aderência, groundedness e outros critérios após a r
 ```yaml
 judges:
   - name: response_quality
+    type: deterministic
     enabled: true
     threshold: 0.7
   - name: groundedness
+    type: deterministic
     enabled: true
     threshold: 0.6
+```
+
+Outro exemplo (com judge llm):
+
+```yaml
+enabled: true
+fail_closed: true
+profile: judge
+
+judges:
+  - name: response_quality
+    enabled: true
+    threshold: 0.7
+
+  - name: groundedness
+    enabled: true
+    threshold: 0.6
+
+  - name: sentiment
+    enabled: true
+    fail_on_negative: false
+
+  - name: tone
+    enabled: true
+    fail_closed: true
 ```
 
 Use judge para avaliar resposta. Use guardrail para bloquear ou proteger. Use prompt para orientar comportamento.

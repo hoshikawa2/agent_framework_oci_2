@@ -1,7 +1,15 @@
 from functools import lru_cache
 from typing import Literal
+
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Load .env into os.environ as well.
+# Pydantic Settings reads .env for Settings fields, but parts of the calibrated
+# guardrails intentionally use os.getenv for compatibility with the original
+# guardrails package. Loading here keeps both paths consistent.
+load_dotenv(override=False)
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
@@ -17,6 +25,7 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = 0.2
     LLM_MAX_TOKENS: int = 2048
     LLM_TIMEOUT_SECONDS: int = 120
+    LLM_PROFILES_PATH: str = './llm_profiles.yaml'
 
     OCI_GENAI_BASE_URL: str = 'https://inference.generativeai.sa-saopaulo-1.oci.oraclecloud.com/openai/v1'
     OCI_GENAI_MODEL: str = 'openai.gpt-4.1'
@@ -76,6 +85,9 @@ class Settings(BaseSettings):
     ORACLE_GRAPH_NAME: str = 'AGENTFW_GRAPH'
     ORACLE_GRAPH_AUTO_CREATE: bool = False
     RAG_TOP_K: int = 5
+    ENABLE_RAG_QUERY_REWRITE: bool = False
+    ENABLE_RAG_CONTEXT_COMPRESSION: bool = False
+    ENABLE_RAG_GENERATION: bool = False
     EMBEDDING_PROVIDER: Literal['mock','oci'] = 'mock'
     OCI_EMBEDDING_MODEL: str = 'cohere.embed-multilingual-v3.0'
 
@@ -107,6 +119,7 @@ class Settings(BaseSettings):
     ENABLE_OUTPUT_GUARDRAILS: bool = True
     ENABLE_PARALLEL_GUARDRAILS: bool = True
     GUARDRAILS_FAIL_FAST: bool = True
+    # Optional LLM inference points. Defaults keep the current deterministic behavior.
     ENABLE_JUDGES: bool = True
     ENABLE_SUPERVISOR: bool = True
     ENABLE_OUTPUT_SUPERVISOR: bool = True

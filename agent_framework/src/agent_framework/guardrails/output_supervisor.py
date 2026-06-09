@@ -8,6 +8,7 @@ from .rail_action import RailAction
 from .rail_decision import RailDecisionV2
 from .rail_result import RailResult
 from .parallel_executor import ParallelRailExecutor
+from .llm_rails import LLMOutputGRLRail
 
 logger = logging.getLogger("agent_framework.guardrails.output_supervisor")
 
@@ -40,8 +41,13 @@ class OutputSupervisor:
         fail_closed_action: RailAction = RailAction.BLOCK,
         enable_parallel: bool = True,
         fail_fast: bool = True,
+        llm: Any | None = None,
+        enable_llm_grl: bool = False,
+        llm_fail_closed: bool = False,
     ):
         self.rails = list(rails or [])
+        if enable_llm_grl and llm is not None:
+            self.rails.append(LLMOutputGRLRail(llm, fail_closed=llm_fail_closed))
         self.fallback_message = fallback_message or "Não consegui validar essa resposta com segurança. Posso reformular a resposta."
         self.max_retries = max_retries
         self.observer = observer
@@ -188,7 +194,29 @@ class OutputSupervisor:
                 RailAction.HANDOVER: "GRL.006",
                 RailAction.OBSERVE: "GRL.007",
             }.get(result.action, "GRL.007")
-            await self._emit(event, {"rail_code": result.code, "reason": result.reason, "metadata": result.metadata}, context)
+            rail_code = str(result.code or "UNKNOWN").upper()
+            allowed = result.action in {RailAction.ALLOW, RailAction.SANITIZE, RailAction.OBSERVE}
+            payload = {
+                "stage": "output",
+                "phase": "output",
+                "component": "guardrail",
+                "rail_code": rail_code,
+                "code": rail_code,
+                "action": result.action.value,
+                "allowed": allowed,
+                "approved": allowed,
+                "reason": result.reason,
+                "metadata": result.metadata,
+            }
+            await self._emit(event, payload, context)
+
+            # Emit named guardrail events too, so Langfuse can be searched by
+            # the concrete rail name, e.g. REVPREC, instead of only GRL.005.
+            # Legacy catch-all output rails are intentionally suppressed because
+            # they duplicate the calibrated GRL signal and add no business value.
+            if rail_code not in {"LEGACY_OUTPUT_GUARDRAIL", "LLM_GUARDRAIL", "LLM_GRL"}:
+                await self._emit(f"guardrail.output.{rail_code}.completed", payload, context)
+                await self._emit(f"GRL.{rail_code}", payload, context)
 
     async def _emit_final(self, decision: RailDecisionV2, context: dict[str, Any]) -> None:
         await self._emit(

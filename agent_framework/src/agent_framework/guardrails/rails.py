@@ -1,183 +1,247 @@
-"""Guardrails pragmáticos para o agent_framework.
+"""Guardrails calibrados integrados à arquitetura atual do agent_framework.
 
-A implementação combina regras determinísticas leves com metadados ricos para
-observabilidade. A maior parte dos rails não bloqueia: sinaliza risco, mascara
-conteúdo sensível ou suaviza a resposta para preservar utilidade do agente.
+Este módulo mantém a interface pública existente (`Guardrail.evaluate(text, context)`),
+a execução paralela, fail-fast e emissão GRL do framework. A calibração de
+regex, prompts e critérios foi importada do pacote anexado em
+`guardrails/calibrated`.
 """
 
 from __future__ import annotations
 
+import os
 import re
+from decimal import Decimal
 from typing import Any
 
+from dotenv import load_dotenv
+
+# Some calibrated rails use environment switches directly. Ensure .env is visible
+# through os.getenv, not only through pydantic Settings.
+load_dotenv(override=False)
+
 from .base import Guardrail, RailDecision
+from .calibrated.input_size import verificar_tamanho_input
+from .calibrated.output_sanitization import mascarar_pii_output, sanitizar_toxicidade_output
+from .calibrated.rules.pinj_patterns import _PINJ_PATTERNS, is_obvious_injection
+from .calibrated.rules.tox_blocklist import _EXPLICIT_TERMS, _THREAT_PATTERNS, is_obvious_toxic
+from .framework_llm_client import classify_with_framework_llm
 
 
 def _lower(text: str) -> str:
     return (text or "").lower()
 
 
-class PiiMaskRail(Guardrail):
-    """Mascara PII em mensagens de entrada.
+def _truthy(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "y"}
 
-    Mantém compatibilidade com o código anterior, mas amplia a cobertura para
-    CPF, CNPJ, telefone, e-mail, cartão, CEP, RG, tokens e chaves comuns.
-    """
+
+def _ctx(context: dict[str, Any] | None) -> dict[str, Any]:
+    return dict(context or {})
+
+
+def _session_id(context: dict[str, Any]) -> str:
+    return str(context.get("session_id") or context.get("session_key") or "guardrail")
+
+
+def _llm(context: dict[str, Any]) -> Any:
+    return context.get("guardrail_llm") or context.get("llm") or context.get("model")
+
+
+def _matched_pattern(patterns: list[Any] | tuple[Any, ...], text: str) -> str | None:
+    for pattern in patterns:
+        try:
+            if pattern.search(text or ""):
+                return getattr(pattern, "pattern", str(pattern))
+        except AttributeError:
+            if re.search(str(pattern), text or "", re.IGNORECASE):
+                return str(pattern)
+    return None
+
+
+def _decision_from_calibrated(result: Any, *, fallback: str | None = None, sanitized_as_sanitize: bool = True) -> RailDecision:
+    allowed = bool(getattr(result, "allowed", True))
+    code = str(getattr(result, "code", None) or "UNKNOWN")
+    sanitized = getattr(result, "sanitized_text", None)
+    data = getattr(result, "data", None) or {}
+    metadata = {
+        "mechanism": getattr(result, "mechanism", None),
+        "data": data,
+        "calibrated": True,
+    }
+    if getattr(result, "timings_ms", None):
+        metadata["timings_ms"] = getattr(result, "timings_ms")
+    return RailDecision(
+        code=code,
+        allowed=allowed,
+        reason=str(getattr(result, "reason", "") or ""),
+        sanitized_text=sanitized if sanitized_as_sanitize and sanitized is not None else None,
+        metadata={k: v for k, v in metadata.items() if v is not None},
+    )
+
+
+class PiiMaskRail(Guardrail):
+    """MSK calibrado: mascara PII no input usando a implementação do pacote anexado."""
 
     code = "MSK"
     stage = "input"
 
-    PATTERNS: list[tuple[str, str]] = [
-        (r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b", "***CPF_MASKED***"),
-        (r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", "***CNPJ_MASKED***"),
-        (r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "***EMAIL_MASKED***"),
-        (r"\b(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?9?\d{4}[-\s]?\d{4}\b", "***PHONE_MASKED***"),
-        (r"\b(?:\d[ -]*?){13,19}\b", "***CARD_MASKED***"),
-        (r"\b\d{5}-?\d{3}\b", "***CEP_MASKED***"),
-        (r"(?i)\bRG\s*[:#-]?\s*[0-9A-Z.\-]{5,14}\b", "***RG_MASKED***"),
-        (r"(?i)\b(?:api[_-]?key|token|secret|password|senha)\s*[:=]\s*['\"]?[A-Za-z0-9_\-.=/+]{8,}", "***SECRET_MASKED***"),
-    ]
-
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        masked = text or ""
-        hits: list[str] = []
-        for pattern, replacement in self.PATTERNS:
-            new_value, count = re.subn(pattern, replacement, masked)
-            if count:
-                hits.append(replacement.strip("*"))
-            masked = new_value
-        return RailDecision(
-            code=self.code,
-            allowed=True,
-            sanitized_text=masked if masked != text else None,
-            metadata={"masked": bool(hits), "entities": sorted(set(hits))},
-        )
+        result = mascarar_pii_output(text or "", _ctx(context))
+        decision = _decision_from_calibrated(result)
+        decision.code = self.code
+        return decision
 
 
 class OutputPiiMaskRail(PiiMaskRail):
-    """Reutiliza o mascaramento de PII para a saída do assistente."""
+    """MSK também no output, mantendo o código MSK para busca consistente no Langfuse."""
 
-    code = "PII_OUT"
+    code = "MSK"
     stage = "output"
 
 
-class ToxicityRail(Guardrail):
-    """Detecta linguagem agressiva sem bloquear por padrão."""
+class MessageSizeRail(Guardrail):
+    """INPUT_SIZE calibrado: limite defensivo por tokens estimados."""
 
-    code = "TOX"
+    code = "INPUT_SIZE"
     stage = "input"
 
-    TERMS = {
-        "idiota",
-        "burro",
-        "incompetente",
-        "lixo",
-        "merda",
-        "porcaria",
-        "droga",
-        "palhaço",
-    }
-
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        lowered = _lower(text)
-        hits = sorted(term for term in self.TERMS if term in lowered)
-        severity = "high" if len(hits) >= 3 else "medium" if hits else "none"
-        return RailDecision(
-            code=self.code,
-            allowed=True,
-            metadata={"toxicity_detected": bool(hits), "severity": severity, "terms": hits},
-        )
+        result = verificar_tamanho_input(text or "", _ctx(context))
+        return _decision_from_calibrated(result)
 
 
 class PromptInjectionRail(Guardrail):
-    """Sinaliza tentativas de manipular instruções internas do agente."""
+    """PINJ calibrado: first-pass determinístico + LLM de guardrail opcional."""
 
     code = "PINJ"
     stage = "input"
 
-    PATTERNS = [
-        r"ignore (all )?(previous|prior) instructions",
-        r"ignore todas as instru[cç][oõ]es",
-        r"esque[cç]a (as|todas as) regras",
-        r"reveal (the )?(system prompt|hidden prompt|instructions)",
-        r"mostre (o )?(prompt|system prompt|prompt oculto|instru[cç][oõ]es internas)",
-        r"developer message",
-        r"system message",
-        r"act as root",
-        r"modo desenvolvedor",
-    ]
-
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        hits = [p for p in self.PATTERNS if re.search(p, text or "", flags=re.IGNORECASE)]
-        score = min(1.0, 0.35 * len(hits))
-        return RailDecision(
-            code=self.code,
-            allowed=True,
-            metadata={"prompt_injection_detected": bool(hits), "score": score, "matches": hits},
+        ctx = _ctx(context)
+        if is_obvious_injection(text or ""):
+            matched = _matched_pattern(_PINJ_PATTERNS, text or "")
+            return RailDecision(
+                code=self.code,
+                allowed=False,
+                reason=(
+                    f"prompt injection/jailbreak detectado pelo padrão determinístico '{matched}'"
+                    if matched
+                    else "prompt injection/jailbreak detectado por regra determinística"
+                ),
+                sanitized_text=text,
+                metadata={"mechanism": "deterministic", "matched_pattern": matched, "calibrated": True},
+            )
+        out = await classify_with_framework_llm(
+            _llm(ctx),
+            "PINJ",
+            {"text": text or "", "context": ctx},
+            profile_name="guardrail",
+            component_name="guardrail.pinj",
+            generation_name="guardrail.pinj",
         )
-
-
-class JailbreakRail(Guardrail):
-    """Detecta jailbreak/roleplay para burlar políticas sem bloquear de imediato."""
-
-    code = "JBRK"
-    stage = "input"
-
-    PATTERNS = [
-        r"sem limites",
-        r"sem restri[cç][oõ]es",
-        r"finja que",
-        r"vamos fazer um roleplay",
-        r"modo livre",
-        r"DAN\b",
-        r"bypass",
-        r"contorne (as )?regras",
-    ]
-
-    async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        hits = [p for p in self.PATTERNS if re.search(p, text or "", flags=re.IGNORECASE)]
-        score = min(1.0, 0.3 * len(hits))
-        return RailDecision(
-            code=self.code,
-            allowed=True,
-            metadata={"jailbreak_detected": bool(hits), "score": score, "matches": hits},
-        )
-
-
-class MessageSizeRail(Guardrail):
-    """Bloqueia apenas mensagens excessivamente grandes."""
-
-    code = "MSIZE"
-    stage = "input"
-
-    def __init__(self, max_chars: int = 12_000):
-        self.max_chars = max_chars
-
-    async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        size = len(text or "")
-        allowed = size <= self.max_chars
+        allowed = bool(out.get("allowed", True))
         return RailDecision(
             code=self.code,
             allowed=allowed,
-            reason="Mensagem muito grande para processamento seguro" if not allowed else "",
-            metadata={"size": size, "max_chars": self.max_chars},
+            reason=str(out.get("reason") or out.get("label") or "PINJ avaliado"),
+            sanitized_text=text,
+            metadata={"mechanism": "llm_rail", "data": out, "calibrated": True},
+        )
+
+
+class JailbreakRail(PromptInjectionRail):
+    """Alias compatível: jailbreak é coberto pelo PINJ expandido calibrado."""
+
+    code = "PINJ"
+    stage = "input"
+
+
+class ToxicityRail(Guardrail):
+    """TOX calibrado: blocklist determinística + LLM leve quando habilitado."""
+
+    code = "TOX"
+    stage = "input"
+
+    async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
+        ctx = _ctx(context)
+        if is_obvious_toxic(text or ""):
+            matched = _matched_pattern((_EXPLICIT_TERMS, _THREAT_PATTERNS), text or "")
+            return RailDecision(
+                code=self.code,
+                allowed=False,
+                reason=(
+                    f"toxicidade óbvia detectada pelo padrão determinístico '{matched}'"
+                    if matched
+                    else "toxicidade óbvia detectada por blocklist determinística"
+                ),
+                sanitized_text=text,
+                metadata={"mechanism": "deterministic", "matched_pattern": matched, "calibrated": True},
+            )
+        if not _truthy(os.getenv("GUARDRAIL_TOX_ENABLED"), False):
+            return RailDecision(code=self.code, allowed=True, metadata={"skipped": "GUARDRAIL_TOX_ENABLED=false", "calibrated": True})
+        out = await classify_with_framework_llm(
+            _llm(ctx),
+            "TOX",
+            {"text": text or "", "context": ctx},
+            profile_name="guardrail",
+            component_name="guardrail.tox",
+            generation_name="guardrail.tox",
+        )
+        return RailDecision(
+            code=self.code,
+            allowed=bool(out.get("allowed", True)),
+            reason=str(out.get("reason") or out.get("label") or "TOX avaliado"),
+            sanitized_text=text,
+            metadata={"mechanism": "llm_rail", "data": out, "calibrated": True},
+        )
+
+
+class OutputToxicitySanitizationRail(Guardrail):
+    """TOXOUT calibrado: sanitiza toxicidade no output sem hard-block."""
+
+    code = "TOXOUT"
+    stage = "output"
+
+    async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
+        result = sanitizar_toxicidade_output(text or "")
+        sanitized = getattr(result, "sanitized_text", None)
+        changed = sanitized is not None and sanitized != text
+        return RailDecision(
+            code=self.code,
+            allowed=True,
+            reason=str(getattr(result, "reason", "") or ("output sanitizado" if changed else "sem toxicidade no output")),
+            sanitized_text=sanitized if changed else None,
+            metadata={"mechanism": getattr(result, "mechanism", None), "data": getattr(result, "data", None), "calibrated": True},
         )
 
 
 class OutOfScopeRail(Guardrail):
+    """OOS calibrado: classificador LLM para escopo de contas/faturas TIM."""
+
     code = "OOS"
     stage = "input"
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        intents = context.get("allowed_intents", [])
-        if intents and not any(i.lower() in _lower(text) for i in intents):
-            return RailDecision(
-                code=self.code,
-                allowed=False,
-                reason="Mensagem potencialmente fora do escopo configurado",
-                metadata={"allowed_intents": intents},
-            )
-        return RailDecision(code=self.code, allowed=True)
+        ctx = _ctx(context)
+        out = await classify_with_framework_llm(
+            _llm(ctx),
+            "OOS",
+            {"text": text or "", "context": ctx},
+            profile_name="guardrail",
+            component_name="guardrail.oos",
+            generation_name="guardrail.oos",
+        )
+        return RailDecision(
+            code=self.code,
+            allowed=bool(out.get("allowed", True)),
+            reason=str(out.get("reason") or out.get("label") or "OOS avaliado"),
+            sanitized_text=text,
+            metadata={"mechanism": "llm_supervisor", "data": out, "calibrated": True},
+        )
 
 
 class LoopRail(Guardrail):
@@ -186,122 +250,199 @@ class LoopRail(Guardrail):
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
         normalized = _lower(text).strip()
-        history = [_lower(h).strip() for h in context.get("history_texts", [])[-6:]]
+        history = [_lower(h).strip() for h in _ctx(context).get("history_texts", [])[-6:]]
         repeated = history.count(normalized) >= 2 if normalized else False
         return RailDecision(
             code=self.code,
             allowed=not repeated,
             reason="Possível loop conversacional" if repeated else "",
-            metadata={"history_window": len(history), "repeated": repeated},
+            metadata={"history_window": len(history), "repeated": repeated, "mechanism": "deterministic"},
         )
 
 
 class PrematureActionRail(Guardrail):
-    """Evita afirmar que uma ação operacional ocorreu sem confirmação de tool."""
+    """REVPREC calibrado: promessa operacional futura sem confirmação."""
 
     code = "REVPREC"
     stage = "output"
 
-    ACTION_TERMS = [
-        "já cancelei",
-        "já contestei",
-        "ajuste realizado",
-        "foi cancelado",
-        "foi contestado",
-        "foi ajustado",
-        "foi removido",
-        "reativação concluída",
-        "protocolo aberto",
-    ]
+    async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
+        ctx = _ctx(context)
+        out = await classify_with_framework_llm(
+            _llm(ctx),
+            "REVPREC",
+            {"text": text or "", "context": ctx},
+            profile_name="grl",
+            component_name="guardrail.revprec",
+            generation_name="guardrail.revprec",
+        )
+        return RailDecision(
+            code=self.code,
+            allowed=bool(out.get("allowed", True)),
+            reason=str(out.get("reason") or out.get("label") or "REVPREC avaliado"),
+            sanitized_text=text,
+            metadata={"mechanism": "llm_rail", "data": out, "calibrated": True},
+        )
+
+
+class ProactiveOfferRail(Guardrail):
+    """AOFERTA calibrado: bloqueia oferta proativa não solicitada no output."""
+
+    code = "AOFERTA"
+    stage = "output"
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        has_action_claim = any(term in _lower(text) for term in self.ACTION_TERMS)
-        confirmed = bool(
-            context.get("tool_action_confirmed")
-            or context.get("tool_executed")
-            or context.get("tool_result")
+        ctx = _ctx(context)
+        out = await classify_with_framework_llm(
+            _llm(ctx),
+            "AOFERTA",
+            {"text": text or "", "context": ctx},
+            profile_name="grl",
+            component_name="guardrail.aoferta",
+            generation_name="guardrail.aoferta",
         )
-        if has_action_claim and not confirmed:
-            return RailDecision(
-                code=self.code,
-                allowed=False,
-                reason="Verbalização prematura de ação operacional",
-                metadata={"has_action_claim": True, "confirmed": False},
-            )
-        return RailDecision(code=self.code, allowed=True, metadata={"has_action_claim": has_action_claim, "confirmed": confirmed})
+        return RailDecision(
+            code=self.code,
+            allowed=bool(out.get("allowed", True)),
+            reason=str(out.get("reason") or out.get("label") or "AOFERTA avaliado"),
+            sanitized_text=text,
+            metadata={"mechanism": "llm_supervisor", "data": out, "calibrated": True},
+        )
 
 
 class ComplianceRail(Guardrail):
-    """Suaviza promessas absolutas e linguagem de garantia excessiva."""
+    """CMP calibrado: protocolo obrigatório em fluxo de ajuste/ANATEL."""
 
     code = "CMP"
     stage = "output"
 
-    REPLACEMENTS = [
-        (r"(?i)\bgaranto que\b", "pelas informações disponíveis,"),
-        (r"(?i)\bcom certeza absoluta\b", "com alta confiança"),
-        (r"(?i)\b100% garantido\b", "previsto conforme as informações disponíveis"),
-        (r"(?i)\bé impossível acontecer\b", "não é esperado acontecer"),
-        (r"(?i)\bnunca haverá\b", "não há indicação de que haverá"),
-    ]
+    _DIGIT_WORDS_RE = r"(?:zero|um|dois|tr[êe]s|quatro|cinco|seis|sete|oito|nove)"
+    _SPOKEN_TOKEN_RE = rf"(?:{_DIGIT_WORDS_RE}|[a-z])"
+    _SPOKEN_PROTOCOL_RE = rf"(?:{_SPOKEN_TOKEN_RE}\s+){{5,}}{_SPOKEN_TOKEN_RE}\b"
+    _PROTOCOL_PATTERN = re.compile(
+        r"(?i)\bprotocolo\b"
+        r"[\s\S]{0,40}?"
+        r"(?:"
+        r"\d{6,}"
+        r"|PRT-[A-Z0-9]{6,}"
+        rf"|{_SPOKEN_PROTOCOL_RE}"
+        r")"
+    )
+    _DIGIT_TO_WORD = {"0":"zero","1":"um","2":"dois","3":"três","4":"quatro","5":"cinco","6":"seis","7":"sete","8":"oito","9":"nove"}
+    _LETTER_TO_WORD = {"a":"a","b":"bê","c":"cê","d":"dê","e":"e","f":"efe","g":"gê","h":"agá","i":"i","j":"jota","k":"ká","l":"ele","m":"eme","n":"ene","o":"o","p":"pê","q":"quê","r":"erre","s":"esse","t":"tê","u":"u","v":"vê","w":"dáblio","x":"xis","y":"ípsilon","z":"zê"}
+
+    def _vocalize(self, value: str) -> str:
+        tokens: list[str] = []
+        for ch in str(value or "").lower():
+            if ch in self._DIGIT_TO_WORD:
+                tokens.append(self._DIGIT_TO_WORD[ch])
+            elif ch in self._LETTER_TO_WORD:
+                tokens.append(self._LETTER_TO_WORD[ch])
+        return " ".join(tokens)
+
+    def _apply_protocol_fallback(self, text: str, expected_protocols: list[str]) -> tuple[str, list[str]]:
+        missing_spoken: list[str] = []
+        for raw in expected_protocols:
+            spoken = self._vocalize(raw)
+            if spoken and spoken in text:
+                continue
+            if raw and raw in text:
+                continue
+            if spoken:
+                missing_spoken.append(spoken)
+        if not missing_spoken:
+            return text, []
+        suffix = " ".join(f"Seu número de protocolo é {s}." for s in missing_spoken)
+        return f"{text.rstrip()} {suffix}".strip(), missing_spoken
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        sanitized = text or ""
-        changes = 0
-        for pattern, replacement in self.REPLACEMENTS:
-            sanitized, count = re.subn(pattern, replacement, sanitized)
-            changes += count
+        ctx = _ctx(context)
+        requer = ctx.get("tipo_fluxo") == "ajuste" or ctx.get("requer_protocolo") is True
+        if not requer:
+            return RailDecision(code=self.code, allowed=True, sanitized_text=None, reason="Compliance Anatel não aplicável", metadata={"calibrated": True})
+        expected = list(ctx.get("expected_protocols") or [])
+        if self._PROTOCOL_PATTERN.search(text or ""):
+            return RailDecision(code=self.code, allowed=True, reason="Resposta contém protocolo obrigatório", metadata={"calibrated": True})
+        patched, missing = self._apply_protocol_fallback(text or "", expected)
+        if patched != (text or ""):
+            return RailDecision(
+                code=self.code,
+                allowed=True,
+                reason="Resposta sem protocolo obrigatório; protocolo anexado deterministicamente",
+                sanitized_text=patched,
+                metadata={"missing_protocols_spoken": missing, "expected_protocols": expected, "mechanism": "deterministic", "calibrated": True},
+            )
         return RailDecision(
             code=self.code,
-            allowed=True,
-            sanitized_text=sanitized if sanitized != text else None,
-            metadata={"softened_absolute_claims": changes},
+            allowed=False,
+            reason="Resposta de ajuste sem número de protocolo",
+            sanitized_text=text,
+            metadata={"expected_protocols": expected, "mechanism": "deterministic", "calibrated": True},
         )
 
 
 class GroundednessRail(Guardrail):
-    """Sinaliza risco quando a resposta parece específica sem evidência/tool/RAG."""
-
     code = "GND"
     stage = "output"
-
     SPECIFICITY_HINTS = ["protocolo", "valor", "data", "fatura", "contrato", "cancelamento", "contestação", "rma"]
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        has_support = bool(
-            context.get("evidence")
-            or context.get("sources")
-            or context.get("retrieval_count")
-            or context.get("tool_result")
-            or context.get("tool_executed")
-        )
+        ctx = _ctx(context)
+        has_support = bool(ctx.get("evidence") or ctx.get("sources") or ctx.get("retrieval_count") or ctx.get("tool_result") or ctx.get("tool_executed"))
         is_specific = any(h in _lower(text) for h in self.SPECIFICITY_HINTS) or bool(re.search(r"\b\d+[,.]?\d*\b", text or ""))
         risk = "high" if is_specific and not has_support else "low"
-        return RailDecision(
-            code=self.code,
-            allowed=True,
-            metadata={"grounded": has_support or not is_specific, "risk": risk, "is_specific": is_specific},
-        )
+        return RailDecision(code=self.code, allowed=True, metadata={"grounded": has_support or not is_specific, "risk": risk, "is_specific": is_specific})
 
 
 class HallucinationRiskRail(Guardrail):
-    """Marca risco de alucinação para uso por judges e telemetria."""
-
     code = "ALUC_RISK"
     stage = "output"
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        support_count = int(bool(context.get("evidence"))) + int(bool(context.get("sources"))) + int(bool(context.get("tool_result")))
+        ctx = _ctx(context)
+        support_count = int(bool(ctx.get("evidence"))) + int(bool(ctx.get("sources"))) + int(bool(ctx.get("tool_result")))
         uncertainty = any(term in _lower(text) for term in ["talvez", "provavelmente", "aparentemente", "não tenho certeza"])
         risk = "medium" if uncertainty and support_count == 0 else "low"
-        if context.get("hallucination_risk") == "high":
+        if ctx.get("hallucination_risk") == "high":
             risk = "high"
         return RailDecision(code=self.code, allowed=True, metadata={"risk": risk, "support_count": support_count})
 
 
-class RetrievalRelevanceRail(Guardrail):
-    """Rail opcional para uso antes de enviar chunks recuperados ao LLM."""
+class RagSecurityRail(Guardrail):
+    code = "RAGSEC"
+    stage = "retrieval"
 
+    async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
+        ctx = _ctx(context)
+        out = await classify_with_framework_llm(_llm(ctx), "RAGSEC", {"text": text or "", "context": ctx}, profile_name="guardrail", component_name="guardrail.ragsec", generation_name="guardrail.ragsec")
+        return RailDecision(code=self.code, allowed=bool(out.get("allowed", True)), reason=str(out.get("reason") or out.get("label") or "RAGSEC avaliado"), sanitized_text=text, metadata={"mechanism": "llm_rail", "data": out, "calibrated": True})
+
+
+class DataLeakageInputRail(Guardrail):
+    code = "DLEX_IN"
+    stage = "input"
+
+    async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
+        ctx = _ctx(context)
+        if not _truthy(os.getenv("GUARDRAIL_DLEX_IN_ENABLED"), False):
+            return RailDecision(code=self.code, allowed=True, metadata={"skipped": "covered_by_PINJ", "calibrated": True})
+        out = await classify_with_framework_llm(_llm(ctx), "DLEX_IN", {"text": text or "", "context": ctx}, profile_name="guardrail", component_name="guardrail.dlex_in", generation_name="guardrail.dlex_in")
+        return RailDecision(code=self.code, allowed=bool(out.get("allowed", True)), reason=str(out.get("reason") or out.get("label") or "DLEX_IN avaliado"), sanitized_text=text, metadata={"mechanism": "llm_rail", "data": out, "calibrated": True})
+
+
+class DataLeakageOutputRail(Guardrail):
+    code = "DLEX_OUT"
+    stage = "output"
+
+    async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
+        ctx = _ctx(context)
+        if not _truthy(os.getenv("GUARDRAIL_DLEX_OUT_ENABLED"), False):
+            return RailDecision(code=self.code, allowed=True, metadata={"skipped": "covered_by_OOS_and_MSK", "calibrated": True})
+        out = await classify_with_framework_llm(_llm(ctx), "DLEX_OUT", {"text": text or "", "context": ctx}, profile_name="grl", component_name="guardrail.dlex_out", generation_name="guardrail.dlex_out")
+        return RailDecision(code=self.code, allowed=bool(out.get("allowed", True)), reason=str(out.get("reason") or out.get("label") or "DLEX_OUT avaliado"), sanitized_text=text, metadata={"mechanism": "llm_rail", "data": out, "calibrated": True})
+
+
+class RetrievalRelevanceRail(Guardrail):
     code = "RET_REL"
     stage = "retrieval"
 
@@ -309,39 +450,31 @@ class RetrievalRelevanceRail(Guardrail):
         self.min_score = min_score
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        score = context.get("score")
+        score = _ctx(context).get("score")
         allowed = score is None or float(score) >= self.min_score
-        return RailDecision(
-            code=self.code,
-            allowed=allowed,
-            reason="Chunk descartado por baixa relevância" if not allowed else "",
-            metadata={"score": score, "min_score": self.min_score},
-        )
+        return RailDecision(code=self.code, allowed=allowed, reason="Chunk descartado por baixa relevância" if not allowed else "", metadata={"score": score, "min_score": self.min_score})
 
 
 class ToolValidationRail(Guardrail):
-    """Rail opcional para validar chamada de ferramenta/MCP antes da execução."""
-
     code = "TOOL_VAL"
     stage = "tool"
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
-        tool_name = context.get("tool_name")
-        args = context.get("tool_args") or {}
-        required = context.get("required_args") or []
+        ctx = _ctx(context)
+        tool_name = ctx.get("tool_name")
+        args = ctx.get("tool_args") or {}
+        required = ctx.get("required_args") or []
         missing = [name for name in required if args.get(name) in (None, "")]
-        invalid_numeric = [name for name, value in args.items() if isinstance(value, (int, float)) and name in {"valor", "amount", "quantity", "quantidade"} and value < 0]
-        allowed_tools = context.get("allowed_tools")
+        invalid_numeric = [name for name, value in args.items() if isinstance(value, (int, float, Decimal)) and name in {"valor", "amount", "quantity", "quantidade"} and value < 0]
+        allowed_tools = ctx.get("allowed_tools")
         not_allowed = bool(allowed_tools and tool_name and tool_name not in allowed_tools)
         allowed = not missing and not invalid_numeric and not not_allowed
-        return RailDecision(
-            code=self.code,
-            allowed=allowed,
-            reason="Chamada de ferramenta inválida ou não permitida" if not allowed else "",
-            metadata={
-                "tool_name": tool_name,
-                "missing_args": missing,
-                "invalid_numeric_args": invalid_numeric,
-                "not_allowed": not_allowed,
-            },
-        )
+        return RailDecision(code=self.code, allowed=allowed, reason="Chamada de ferramenta inválida ou não permitida" if not allowed else "", metadata={"tool_name": tool_name, "missing_args": missing, "invalid_numeric_args": invalid_numeric, "not_allowed": not_allowed})
+
+
+# Aliases compatíveis com nomes usados em documentações/códigos anteriores.
+AOfertaRail = ProactiveOfferRail
+RevprecRail = PrematureActionRail
+RagsecRail = RagSecurityRail
+DlexInRail = DataLeakageInputRail
+DlexOutRail = DataLeakageOutputRail
