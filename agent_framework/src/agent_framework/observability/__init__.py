@@ -27,5 +27,3 @@ try:
     from .ic_events import *  # noqa: F401,F403
 except Exception:  # pragma: no cover
     pass
-
-from .llm_advisors import NOCReasoningAdvisor, GRLReasoningAdvisor

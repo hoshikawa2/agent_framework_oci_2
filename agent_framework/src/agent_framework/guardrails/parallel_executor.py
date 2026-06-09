@@ -175,68 +175,21 @@ class ParallelRailExecutor:
 
     async def _run_one(self, rail: Any, text: str, context: dict[str, Any]) -> RailResult:
         code = self._code(rail)
-        await self._emit_rail_event(
-            "started",
-            code,
-            self.stage,
-            context,
-            {
-                "text_size": len(text or ""),
-                "component": "guardrail",
-            },
-        )
         try:
             raw = rail.evaluate(text, context)
             if inspect.isawaitable(raw):
                 raw = await raw
-            result = self._normalize(raw, code=code)
-            await self._emit_rail_event(
-                "completed",
-                result.code or code,
-                self.stage,
-                context,
-                {
-                    "action": result.action.value,
-                    "allowed": result.action in ALLOW_ACTIONS,
-                    "approved": result.action in ALLOW_ACTIONS,
-                    "reason": result.reason,
-                    "metadata": result.metadata,
-                    "component": "guardrail",
-                },
-            )
-            return result
+            return self._normalize(raw, code=code)
         except asyncio.CancelledError:
-            await self._emit_rail_event(
-                "cancelled",
-                code,
-                self.stage,
-                context,
-                {"component": "guardrail"},
-            )
             raise
         except Exception as exc:
             logger.exception("parallel rail failed code=%s", code)
-            result = RailResult(
+            return RailResult(
                 code=code,
                 action=RailAction.BLOCK if self.fail_closed else RailAction.OBSERVE,
                 reason=f"Rail falhou em modo {'fail-closed' if self.fail_closed else 'observe'}: {exc}",
                 metadata={"exception_type": exc.__class__.__name__},
             )
-            await self._emit_rail_event(
-                "completed",
-                code,
-                self.stage,
-                context,
-                {
-                    "action": result.action.value,
-                    "allowed": result.action in ALLOW_ACTIONS,
-                    "approved": result.action in ALLOW_ACTIONS,
-                    "reason": result.reason,
-                    "metadata": result.metadata,
-                    "component": "guardrail",
-                },
-            )
-            return result
 
     def _normalize(self, raw: Any, *, code: str) -> RailResult:
         if isinstance(raw, RailResult):
@@ -288,61 +241,7 @@ class ParallelRailExecutor:
             RailAction.HANDOVER: "006",
             RailAction.OBSERVE: "007",
         }.get(result.action, "007")
-        payload = {
-            "stage": stage,
-            "rail_code": result.code,
-            "code": result.code,
-            "action": result.action.value,
-            "allowed": result.action in ALLOW_ACTIONS,
-            "approved": result.action in ALLOW_ACTIONS,
-            "reason": result.reason,
-            "metadata": result.metadata,
-            "component": "guardrail",
-        }
-        await self._emit_grl(event_code, payload, context)
-        await self._emit_named_grl(result.code, payload, context)
-
-    async def _emit_rail_event(
-        self,
-        status: str,
-        rail_code: str,
-        stage: str,
-        context: dict[str, Any],
-        payload: dict[str, Any] | None = None,
-    ) -> None:
-        if not self.observer:
-            return
-        code = str(rail_code or "UNKNOWN").upper()
-        event_type = f"guardrail.{stage}.{code}.{status}"
-        body = {
-            **context,
-            **dict(payload or {}),
-            "stage": stage,
-            "phase": "output" if "output" in str(stage).lower() else "input",
-            "rail_code": code,
-            "code": code,
-            "status": status,
-        }
-        try:
-            await self.observer.emit(event_type, body, metadata={"component": "guardrail", "rail_code": code})
-        except Exception:
-            logger.debug("parallel executor named rail emit failed code=%s status=%s", code, status, exc_info=True)
-
-    async def _emit_named_grl(self, rail_code: str, payload: dict[str, Any], context: dict[str, Any]) -> None:
-        if not self.observer:
-            return
-        code = str(rail_code or "").strip().upper()
-        if not code:
-            return
-        if code in {"LEGACY_OUTPUT_GUARDRAIL", "LLM_GUARDRAIL", "LLM_GRL"}:
-            return
-        try:
-            if hasattr(self.observer, "emit_grl"):
-                await self.observer.emit_grl(code, {**context, **payload, "rail_code": code, "code": code}, component="parallel_rail_executor")
-            else:
-                await self.observer.emit(f"GRL.{code}", {**context, **payload, "rail_code": code, "code": code}, metadata={"component": "parallel_rail_executor"})
-        except Exception:
-            logger.debug("parallel executor named GRL emit failed code=%s", code, exc_info=True)
+        await self._emit_grl(event_code, {"stage": stage, "rail_code": result.code, "action": result.action.value, "reason": result.reason}, context)
 
     async def _emit_grl(self, code: str, payload: dict[str, Any], context: dict[str, Any]) -> None:
         if not self.observer:

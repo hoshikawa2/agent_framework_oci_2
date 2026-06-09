@@ -5,14 +5,10 @@ from typing import Any
 from .pipeline import GuardrailPipeline
 from .rails import (
     ComplianceRail,
-    DataLeakageInputRail,
-    DataLeakageOutputRail,
     MessageSizeRail,
     OutputPiiMaskRail,
-    OutputToxicitySanitizationRail,
     PiiMaskRail,
     PrematureActionRail,
-    ProactiveOfferRail,
     PromptInjectionRail,
     ToxicityRail,
 )
@@ -25,9 +21,7 @@ class CustomRails:
     O bundle mínimo é carregado por padrão para manter piso de segurança.
     """
 
-    def __init__(self, *, skip_default_bundle: bool = False, llm: Any | None = None, observer: Any | None = None):
-        self.llm = llm
-        self.observer = observer
+    def __init__(self, *, skip_default_bundle: bool = False):
         self.input_rails: list[Any] = []
         self.output_rails: list[Any] = []
         if not skip_default_bundle:
@@ -35,8 +29,8 @@ class CustomRails:
         self.configure()
 
     def _load_default_bundle(self) -> None:
-        self.input_rails.extend([MessageSizeRail(), PiiMaskRail(), ToxicityRail(), PromptInjectionRail(), DataLeakageInputRail()])
-        self.output_rails.extend([OutputPiiMaskRail(), OutputToxicitySanitizationRail(), ComplianceRail(), ProactiveOfferRail(), PrematureActionRail(), DataLeakageOutputRail()])
+        self.input_rails.extend([MessageSizeRail(), PiiMaskRail(), PromptInjectionRail()])
+        self.output_rails.extend([OutputPiiMaskRail(), ToxicityRail(), ComplianceRail(), PrematureActionRail()])
 
     def configure(self) -> None:
         """Override em subclasses."""
@@ -49,7 +43,7 @@ class CustomRails:
             self.input_rails.append(rail)
 
     def as_pipeline(self) -> GuardrailPipeline:
-        return GuardrailPipeline(input_rails=self.input_rails, output_rails=self.output_rails, llm=self.llm, observer=self.observer)
+        return GuardrailPipeline(input_rails=self.input_rails, output_rails=self.output_rails)
 
     async def apply_input(self, user_message: str, **ctx: Any):
         return await self.as_pipeline().run_input(user_message, ctx)

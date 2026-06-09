@@ -151,15 +151,10 @@ class Telemetry:
     async def generation(self, name: str, model: str, input: list | dict | str, output: str,
                          metadata: dict[str, Any] | None = None, usage: dict[str, Any] | None = None):
         metadata = context_metadata(metadata or {})
-        # Keep the actual LLM model visible both in Langfuse's generation.model field
-        # and in metadata for filtering/debugging across SDK versions.
-        metadata.setdefault("model", model)
-        metadata.setdefault("llm_model", model)
-        metadata.setdefault("component", metadata.get("profile_name") or name)
         if usage:
             metadata["usage"] = usage
-        logger.info("generation %s model=%s component=%s profile=%s metadata=%s", name, model, metadata.get("component"), metadata.get("profile_name"), _safe(metadata))
-        await self.event_bus.publish(name, {"model": model, "llm_model": model, "output_chars": len(output or ""), **metadata}, kind="generation")
+        logger.info("generation %s model=%s chars=%s metadata=%s", name, model, len(output or ""), _safe(metadata))
+        await self.event_bus.publish(name, {"model": model, "output_chars": len(output or ""), **metadata}, kind="generation")
         if not self.is_enabled():
             return
         try:
@@ -167,23 +162,10 @@ class Telemetry:
             if usage:
                 kwargs["usage"] = usage
                 kwargs["usage_details"] = {k: usage.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "reasoning_tokens") if k in usage}
-
-            # Prefer explicit generation APIs when available because they expose the
-            # model column more reliably in Langfuse than a generic observation.
-            if hasattr(self.langfuse, "generation"):
-                gen = self.langfuse.generation(**{k: v for k, v in kwargs.items() if k != "as_type" and v is not None})
-                if hasattr(gen, "end"):
-                    gen.end(output=output, metadata=metadata)
-                return
-            if hasattr(self.langfuse, "start_as_current_generation"):
-                with self.langfuse.start_as_current_generation(**{k: v for k, v in kwargs.items() if k != "as_type" and v is not None}) as obs:
-                    self._update_observation(obs, output=output, model=model, metadata=metadata)
-                return
-
             cm = self._start_observation(**kwargs)
             if cm is not None:
                 with cm as obs:
-                    self._update_observation(obs, output=output, model=model, metadata=metadata)
+                    self._update_observation(obs, output=output, metadata=metadata)
         except Exception:
             logger.exception("Falha ao registrar generation no Langfuse")
 
@@ -235,11 +217,7 @@ class Telemetry:
             except TypeError:
                 return self.langfuse.start_as_current_observation(name=kwargs["name"], as_type=kwargs.get("as_type", "span"))
         if hasattr(self.langfuse, "span"):
-            legacy_metadata = dict(kwargs.get("metadata") or {})
-            if kwargs.get("model") is not None:
-                legacy_metadata.setdefault("model", kwargs.get("model"))
-                legacy_metadata.setdefault("llm_model", kwargs.get("model"))
-            span = self.langfuse.span(name=kwargs["name"], input=kwargs.get("input"), output=kwargs.get("output"), metadata=legacy_metadata)
+            span = self.langfuse.span(name=kwargs["name"], input=kwargs.get("input"), output=kwargs.get("output"), metadata=kwargs.get("metadata"))
             return _LegacyObservationContext(span)
         return None
 

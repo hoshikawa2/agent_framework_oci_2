@@ -148,9 +148,6 @@ class EnterpriseRouter:
             ],
             temperature=0.0,
             max_tokens=512,
-            profile_name="router",
-            component_name="router",
-            generation_name="llm.router",
         )
         data = self._parse_json(answer)
         intent_name = str(data.get("intent") or "fallback")
