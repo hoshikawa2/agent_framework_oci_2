@@ -8,6 +8,8 @@ from .parallel_executor import ParallelRailExecutor, TERMINAL_ACTIONS
 from .rail_action import RailAction
 from .rails import (
     ComplianceRail,
+    DataLeakageInputRail,
+    DataLeakageOutputRail,
     GroundednessRail,
     HallucinationRiskRail,
     JailbreakRail,
@@ -15,9 +17,12 @@ from .rails import (
     MessageSizeRail,
     OutOfScopeRail,
     OutputPiiMaskRail,
+    OutputToxicitySanitizationRail,
     PiiMaskRail,
     PrematureActionRail,
+    ProactiveOfferRail,
     PromptInjectionRail,
+    RagSecurityRail,
     RetrievalRelevanceRail,
     ToolValidationRail,
     ToxicityRail,
@@ -56,24 +61,41 @@ class GuardrailPipeline:
         observer: Any | None = None,
         enable_parallel: bool | None = None,
         fail_fast: bool | None = None,
+        llm: Any | None = None,
+        enable_llm_guardrail: bool | None = None,
+        llm_fail_closed: bool = False,
     ):
         self.input_rails = input_rails or [
             MessageSizeRail(),
             PiiMaskRail(),
             ToxicityRail(),
             PromptInjectionRail(),
-            JailbreakRail(),
             LoopRail(),
+            DataLeakageInputRail(),
         ]
+        # OOS pode ser ligado por env/config sem alterar código de agente.
+        if input_rails is None and _truthy(os.getenv("GUARDRAIL_OOS_ENABLED"), False):
+            self.input_rails.append(OutOfScopeRail())
+
         self.output_rails = output_rails or [
             OutputPiiMaskRail(),
+            OutputToxicitySanitizationRail(),
             ComplianceRail(),
+            ProactiveOfferRail(),
             PrematureActionRail(),
+            DataLeakageOutputRail(),
             GroundednessRail(),
             HallucinationRiskRail(),
         ]
-        self.retrieval_rails = retrieval_rails or [RetrievalRelevanceRail(), PiiMaskRail()]
+        self.retrieval_rails = retrieval_rails or [RetrievalRelevanceRail(), RagSecurityRail(), PiiMaskRail()]
         self.tool_rails = tool_rails or [ToolValidationRail()]
+        self.llm = llm
+        # The generic legacy LLM guardrail was removed from the default pipeline.
+        # Calibrated rails such as PINJ, TOX, OOS, REVPREC, AOFERTA, DLEX_* and
+        # RAGSEC decide individually when they need the LLM and which profile
+        # (guardrail/grl) they must use. Keeping the old catch-all rail produced
+        # duplicate/ambiguous telemetry such as LEGACY_OUTPUT_GUARDRAIL.
+        self.enable_llm_guardrail = False
         self.observer = observer
         self.enable_parallel = _truthy(os.getenv("ENABLE_PARALLEL_GUARDRAILS"), True) if enable_parallel is None else enable_parallel
         self.fail_fast = _truthy(os.getenv("GUARDRAILS_FAIL_FAST"), True) if fail_fast is None else fail_fast
@@ -127,9 +149,14 @@ class GuardrailPipeline:
         return execution.text, decisions
 
     async def _run(self, text: str, context: dict[str, Any], rails: list, *, stage: str = "guardrail") -> tuple[str, list[RailDecision]]:
+        run_context = dict(context or {})
+        # Disponibiliza o LLM do framework para rails calibrados sem criar cliente paralelo.
+        if self.llm is not None:
+            run_context.setdefault("llm", self.llm)
+            run_context.setdefault("guardrail_llm", self.llm)
         if not self.enable_parallel:
-            return await self._run_sequential(text, context, rails)
-        return await self._run_parallel(text, context, rails, stage=stage)
+            return await self._run_sequential(text, run_context, rails)
+        return await self._run_parallel(text, run_context, rails, stage=stage)
 
     async def run_input(self, text, context):
         return await self._run(text, context or {}, self.input_rails, stage="input")

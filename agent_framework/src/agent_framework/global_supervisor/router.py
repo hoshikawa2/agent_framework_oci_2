@@ -163,7 +163,7 @@ class GlobalSupervisorRouter:
             raw = await self.llm.ainvoke([
                 {"role": "system", "content": "Você é um supervisor global de backends. Responda somente JSON válido."},
                 {"role": "user", "content": prompt},
-            ], temperature=0)
+            ], temperature=0, profile_name="supervisor", component_name="supervisor", generation_name="llm.supervisor")
             data = self._parse_json(raw)
             backend_id = str(data.get("backend") or data.get("backend_id") or "").strip()
             if backend_id not in self.registry.backends:
