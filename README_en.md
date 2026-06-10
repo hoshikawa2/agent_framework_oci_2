@@ -9605,13 +9605,16 @@ A complete local sequence can be:
 
 ```bash
 # 1. Upload agent MCP, if any
-cd mcp_servers/my_agent_mcp
-python -m uvicorn app.main:app --host 0.0.0.0 --port 9001 --reload
+cd mcp_servers/telecom_mcp_server
+python -m uvicorn main:app --host 0.0.0.0 --port 8100 --reload
+
+cd mcp_servers/telecom_mcp_server
+python -m uvicorn main:app --host 0.0.0.0 --port 8200 --reload
 
 # 2. Upload the Accounts agent backend
 cd agent_template_backend
 cp .env.example .env
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 # 3. Upload Agent Gateway
 cd agent_gateway

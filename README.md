@@ -9584,18 +9584,12 @@ Framework
 Uma sequência local completa pode ser:
 
 ```bash
-<<<<<<< HEAD
 # 1. Subir MCP do agente, se existir
-cd mcp_servers/meu_agente_mcp
-python -m uvicorn app.main:app --host 0.0.0.0 --port 9001 --reload
-=======
-# 1. Upload agent MCP, if any
 cd mcp_servers/telecom_mcp_server
 python -m uvicorn main:app --host 0.0.0.0 --port 8100 --reload
 
 cd mcp_servers/telecom_mcp_server
 python -m uvicorn main:app --host 0.0.0.0 --port 8200 --reload
->>>>>>> 8b44748 (ajuste documento)
 
 # 2. Subir backend do agente Contas
 cd agent_template_backend
