@@ -181,7 +181,7 @@ class ToxicityRail(Guardrail):
                 sanitized_text=text,
                 metadata={"mechanism": "deterministic", "matched_pattern": matched, "calibrated": True},
             )
-        if not _truthy(os.getenv("GUARDRAIL_TOX_ENABLED"), False):
+        if not ctx.get("__guardrails_yaml_controlled") and not _truthy(os.getenv("GUARDRAIL_TOX_ENABLED"), False):
             return RailDecision(code=self.code, allowed=True, metadata={"skipped": "GUARDRAIL_TOX_ENABLED=false", "calibrated": True})
         out = await classify_with_framework_llm(
             _llm(ctx),
@@ -424,7 +424,7 @@ class DataLeakageInputRail(Guardrail):
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
         ctx = _ctx(context)
-        if not _truthy(os.getenv("GUARDRAIL_DLEX_IN_ENABLED"), False):
+        if not ctx.get("__guardrails_yaml_controlled") and not _truthy(os.getenv("GUARDRAIL_DLEX_IN_ENABLED"), False):
             return RailDecision(code=self.code, allowed=True, metadata={"skipped": "covered_by_PINJ", "calibrated": True})
         out = await classify_with_framework_llm(_llm(ctx), "DLEX_IN", {"text": text or "", "context": ctx}, profile_name="guardrail", component_name="guardrail.dlex_in", generation_name="guardrail.dlex_in")
         return RailDecision(code=self.code, allowed=bool(out.get("allowed", True)), reason=str(out.get("reason") or out.get("label") or "DLEX_IN avaliado"), sanitized_text=text, metadata={"mechanism": "llm_rail", "data": out, "calibrated": True})
@@ -436,7 +436,7 @@ class DataLeakageOutputRail(Guardrail):
 
     async def evaluate(self, text: str, context: dict[str, Any]) -> RailDecision:
         ctx = _ctx(context)
-        if not _truthy(os.getenv("GUARDRAIL_DLEX_OUT_ENABLED"), False):
+        if not ctx.get("__guardrails_yaml_controlled") and not _truthy(os.getenv("GUARDRAIL_DLEX_OUT_ENABLED"), False):
             return RailDecision(code=self.code, allowed=True, metadata={"skipped": "covered_by_OOS_and_MSK", "calibrated": True})
         out = await classify_with_framework_llm(_llm(ctx), "DLEX_OUT", {"text": text or "", "context": ctx}, profile_name="grl", component_name="guardrail.dlex_out", generation_name="guardrail.dlex_out")
         return RailDecision(code=self.code, allowed=bool(out.get("allowed", True)), reason=str(out.get("reason") or out.get("label") or "DLEX_OUT avaliado"), sanitized_text=text, metadata={"mechanism": "llm_rail", "data": out, "calibrated": True})

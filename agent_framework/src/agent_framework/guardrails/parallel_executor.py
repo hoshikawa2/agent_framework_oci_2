@@ -88,10 +88,11 @@ class ParallelRailExecutor:
         if not rail_list:
             return execution
 
-        await self._emit_grl("001", {"stage": current_stage, "rails": [self._code(r) for r in rail_list]}, ctx)
+        visible_rails = [self._code(r) for r in rail_list if not self._is_suppressed_legacy_code(self._code(r))]
+        await self._emit_grl("001", {"stage": current_stage, "rails": visible_rails}, ctx)
 
         tasks: dict[asyncio.Task[RailResult], Any] = {
-            asyncio.create_task(self._run_one(rail, text, ctx), name=f"rail:{self._code(rail)}"): rail
+            asyncio.create_task(self._run_one(rail, text, ctx, current_stage), name=f"rail:{self._code(rail)}"): rail
             for rail in rail_list
         }
 
@@ -173,12 +174,13 @@ class ParallelRailExecutor:
         )
         return execution
 
-    async def _run_one(self, rail: Any, text: str, context: dict[str, Any]) -> RailResult:
+    async def _run_one(self, rail: Any, text: str, context: dict[str, Any], stage: str | None = None) -> RailResult:
         code = self._code(rail)
+        current_stage = stage or self.stage
         await self._emit_rail_event(
             "started",
             code,
-            self.stage,
+            current_stage,
             context,
             {
                 "text_size": len(text or ""),
@@ -193,7 +195,7 @@ class ParallelRailExecutor:
             await self._emit_rail_event(
                 "completed",
                 result.code or code,
-                self.stage,
+                current_stage,
                 context,
                 {
                     "action": result.action.value,
@@ -209,7 +211,7 @@ class ParallelRailExecutor:
             await self._emit_rail_event(
                 "cancelled",
                 code,
-                self.stage,
+                current_stage,
                 context,
                 {"component": "guardrail"},
             )
@@ -225,7 +227,7 @@ class ParallelRailExecutor:
             await self._emit_rail_event(
                 "completed",
                 code,
-                self.stage,
+                current_stage,
                 context,
                 {
                     "action": result.action.value,
@@ -280,6 +282,8 @@ class ParallelRailExecutor:
         return str(getattr(rail, "code", rail.__class__.__name__))
 
     async def _emit_result(self, result: RailResult, stage: str, context: dict[str, Any]) -> None:
+        if self._is_suppressed_legacy_code(result.code):
+            return
         event_code = {
             RailAction.ALLOW: "002",
             RailAction.SANITIZE: "003",
@@ -313,6 +317,8 @@ class ParallelRailExecutor:
         if not self.observer:
             return
         code = str(rail_code or "UNKNOWN").upper()
+        if self._is_suppressed_legacy_code(code):
+            return
         event_type = f"guardrail.{stage}.{code}.{status}"
         body = {
             **context,
@@ -328,13 +334,15 @@ class ParallelRailExecutor:
         except Exception:
             logger.debug("parallel executor named rail emit failed code=%s status=%s", code, status, exc_info=True)
 
+    def _is_suppressed_legacy_code(self, rail_code: str | None) -> bool:
+        code = str(rail_code or "").strip().upper()
+        return code in {"LEGACY_OUTPUT_GUARDRAIL", "LEGACY_OUTPUT_GUARDRAILS", "LLM_GUARDRAIL", "LLM_GRL"}
+
     async def _emit_named_grl(self, rail_code: str, payload: dict[str, Any], context: dict[str, Any]) -> None:
         if not self.observer:
             return
         code = str(rail_code or "").strip().upper()
-        if not code:
-            return
-        if code in {"LEGACY_OUTPUT_GUARDRAIL", "LLM_GUARDRAIL", "LLM_GRL"}:
+        if not code or self._is_suppressed_legacy_code(code):
             return
         try:
             if hasattr(self.observer, "emit_grl"):

@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 from .base import RailDecision
+from .config_loader import load_guardrails_config
 from .parallel_executor import ParallelRailExecutor, TERMINAL_ACTIONS
 from .rail_action import RailAction
 from .rails import (
@@ -64,31 +65,55 @@ class GuardrailPipeline:
         llm: Any | None = None,
         enable_llm_guardrail: bool | None = None,
         llm_fail_closed: bool = False,
+        config_path: str | None = None,
     ):
-        self.input_rails = input_rails or [
-            MessageSizeRail(),
-            PiiMaskRail(),
-            ToxicityRail(),
-            PromptInjectionRail(),
-            LoopRail(),
-            DataLeakageInputRail(),
-        ]
-        # OOS pode ser ligado por env/config sem alterar código de agente.
-        if input_rails is None and _truthy(os.getenv("GUARDRAIL_OOS_ENABLED"), False):
-            self.input_rails.append(OutOfScopeRail())
+        self.guardrails_config = load_guardrails_config(config_path)
+        self.config_loaded = bool(self.guardrails_config.loaded)
 
-        self.output_rails = output_rails or [
-            OutputPiiMaskRail(),
-            OutputToxicitySanitizationRail(),
-            ComplianceRail(),
-            ProactiveOfferRail(),
-            PrematureActionRail(),
-            DataLeakageOutputRail(),
-            GroundednessRail(),
-            HallucinationRiskRail(),
-        ]
-        self.retrieval_rails = retrieval_rails or [RetrievalRelevanceRail(), RagSecurityRail(), PiiMaskRail()]
-        self.tool_rails = tool_rails or [ToolValidationRail()]
+        if input_rails is None:
+            if self.config_loaded:
+                self.input_rails = list(self.guardrails_config.input_rails or [])
+            else:
+                self.input_rails = [
+                    MessageSizeRail(),
+                    PiiMaskRail(),
+                    ToxicityRail(),
+                    PromptInjectionRail(),
+                    LoopRail(),
+                    DataLeakageInputRail(),
+                ]
+                # Compatibilidade antiga apenas quando não há guardrails.yaml.
+                if _truthy(os.getenv("GUARDRAIL_OOS_ENABLED"), False):
+                    self.input_rails.append(OutOfScopeRail())
+        else:
+            self.input_rails = input_rails
+
+        if output_rails is None:
+            if self.config_loaded:
+                self.output_rails = list(self.guardrails_config.output_rails or [])
+            else:
+                self.output_rails = [
+                    OutputPiiMaskRail(),
+                    OutputToxicitySanitizationRail(),
+                    ComplianceRail(),
+                    ProactiveOfferRail(),
+                    PrematureActionRail(),
+                    DataLeakageOutputRail(),
+                    GroundednessRail(),
+                    HallucinationRiskRail(),
+                ]
+        else:
+            self.output_rails = output_rails
+
+        if retrieval_rails is None:
+            self.retrieval_rails = list(self.guardrails_config.retrieval_rails or []) if self.config_loaded else [RetrievalRelevanceRail(), RagSecurityRail(), PiiMaskRail()]
+        else:
+            self.retrieval_rails = retrieval_rails
+
+        if tool_rails is None:
+            self.tool_rails = list(self.guardrails_config.tool_rails or []) if self.config_loaded else [ToolValidationRail()]
+        else:
+            self.tool_rails = tool_rails
         self.llm = llm
         # The generic legacy LLM guardrail was removed from the default pipeline.
         # Calibrated rails such as PINJ, TOX, OOS, REVPREC, AOFERTA, DLEX_* and
@@ -154,6 +179,10 @@ class GuardrailPipeline:
         if self.llm is not None:
             run_context.setdefault("llm", self.llm)
             run_context.setdefault("guardrail_llm", self.llm)
+        run_context.setdefault("__guardrails_config_loaded", self.config_loaded)
+        if self.config_loaded:
+            run_context.setdefault("__guardrails_config_path", self.guardrails_config.path)
+            run_context.setdefault("__guardrails_yaml_controlled", True)
         if not self.enable_parallel:
             return await self._run_sequential(text, run_context, rails)
         return await self._run_parallel(text, run_context, rails, stage=stage)

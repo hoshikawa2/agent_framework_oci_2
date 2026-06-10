@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .pipeline import GuardrailPipeline
+from .config_loader import load_guardrails_config
 from .rails import (
     ComplianceRail,
     DataLeakageInputRail,
@@ -35,6 +36,11 @@ class CustomRails:
         self.configure()
 
     def _load_default_bundle(self) -> None:
+        cfg = load_guardrails_config()
+        if cfg.loaded:
+            self.input_rails.extend(list(cfg.input_rails or []))
+            self.output_rails.extend(list(cfg.output_rails or []))
+            return
         self.input_rails.extend([MessageSizeRail(), PiiMaskRail(), ToxicityRail(), PromptInjectionRail(), DataLeakageInputRail()])
         self.output_rails.extend([OutputPiiMaskRail(), OutputToxicitySanitizationRail(), ComplianceRail(), ProactiveOfferRail(), PrematureActionRail(), DataLeakageOutputRail()])
 

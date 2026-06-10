@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     MCP_TOOL_TIMEOUT_SECONDS: int = 30
 
     DEFAULT_CHANNEL: str = 'web'
+    # Agent Framework channel input mode.
+    # embedded = backend may use internal adapters to interpret simple/native payloads.
+    # external = backend accepts only GatewayRequest payloads already normalized by an external Channel Gateway.
+    FRAMEWORK_CHANNEL_INPUT_MODE: Literal['embedded','external'] = 'embedded'
+    # Legacy alias kept for compatibility with older .env files. Prefer FRAMEWORK_CHANNEL_INPUT_MODE.
+    CHANNEL_GATEWAY_MODE: str | None = None
     ENABLE_VOICE_ADAPTER: bool = True
     ENABLE_WHATSAPP_ADAPTER: bool = True
     ENABLE_TEXT_ADAPTER: bool = True

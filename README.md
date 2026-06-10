@@ -878,6 +878,1261 @@ Qual resposta deve ser devolvida ao usuário?
 Quais eventos IC preciso emitir para auditoria da jornada?
 ```
 
+---
+
+#### 5.1.1. Channel Gateway — Interno e Externo no Agent Framework
+
+Este capítulo explica o papel do **Channel Gateway** dentro da arquitetura do Agent Framework e por que ele pode ser executado de duas formas:
+
+```text
+1. Channel Gateway interno
+   Embutido no próprio backend do framework.
+
+2. Channel Gateway externo
+   Executado como serviço separado, mantido por uma equipe de canais ou integração.
+```
+
+A principal função do Channel Gateway é proteger o Agent Framework contra formatos variados, instáveis ou desconhecidos de canais externos.
+
+Regra central:
+
+```text
+O agente não deve conhecer payload bruto de canal.
+
+O agente deve receber apenas mensagens normalizadas pelo framework.
+```
+
+---
+
+### 5.1.1.1. Problema que o Channel Gateway resolve
+
+Em ambientes reais, cada canal envia mensagens em formatos diferentes.
+
+Exemplos:
+
+```text
+Web
+WhatsApp
+Teams
+Email
+Voice
+URA
+Genesys
+Twilio
+Zendesk
+CRM
+Aplicativo mobile
+Canal proprietário do cliente
+```
+
+Cada canal pode ter um payload completamente diferente.
+
+Um canal de WhatsApp pode enviar algo como:
+
+```json
+{
+  "wa_id": "5511999999999",
+  "messages": [
+    {
+      "type": "interactive",
+      "interactive": {
+        "button_reply": {
+          "id": "segunda_via_fatura",
+          "title": "Segunda via de fatura"
+        }
+      }
+    }
+  ]
+}
+```
+
+Um canal de voz pode enviar:
+
+```json
+{
+  "event": "voice.transcript.completed",
+  "caller": "+5511999999999",
+  "transcript": "quero consultar minha fatura",
+  "confidence": 0.94
+}
+```
+
+Um frontend web pode enviar:
+
+```json
+{
+  "message": "Quero consultar minha fatura",
+  "session_id": "abc123",
+  "customer_key": "11999999999"
+}
+```
+
+Se o framework aceitasse todos esses formatos diretamente, o core ficaria contaminado com regras específicas de canal.
+
+O resultado seria ruim:
+
+```text
+agentes conhecendo WhatsApp
+agentes conhecendo URA
+agentes conhecendo Teams
+workflow tratando payloads externos
+guardrails recebendo objetos inesperados
+MCP recebendo parâmetros inconsistentes
+manutenção de canais caindo no time do framework
+```
+
+O Channel Gateway existe para impedir isso.
+
+---
+
+### 5.1.1.2. Responsabilidade do Channel Gateway
+
+O Channel Gateway é a camada responsável por transformar mensagens externas em um formato aceito pelo Agent Framework.
+
+Ele faz a ponte entre:
+
+```text
+Mundo externo
+  payloads específicos de canais
+
+e
+
+Agent Framework
+  contrato padronizado de entrada
+```
+
+Responsabilidades típicas:
+
+```text
+receber payload externo
+validar estrutura mínima
+validar autenticação ou assinatura do canal
+extrair texto do usuário
+extrair identificadores técnicos
+extrair identificadores de negócio
+normalizar sessão
+normalizar metadados
+mapear dados para business_context
+montar GatewayRequest
+chamar o backend do Agent Framework
+traduzir a resposta do framework de volta para o canal
+```
+
+O Channel Gateway não deve executar raciocínio de agente.
+
+Ele não deve:
+
+```text
+decidir resposta final do usuário
+executar LangGraph
+executar guardrails de domínio
+chamar MCP diretamente
+fazer RAG
+chamar LLM como agente
+persistir memória conversacional do framework
+implementar regra de negócio do agente
+```
+
+---
+
+### 5.1.1.3. Responsabilidade do Agent Framework
+
+O Agent Framework começa a trabalhar depois que a mensagem já foi colocada no contrato aceito pelo backend.
+
+Responsabilidades do framework:
+
+```text
+validar o contrato de entrada
+normalizar contexto
+resolver identidade de negócio
+criar ou recuperar sessão
+executar guardrails de entrada
+rotear intenção
+executar LangGraph
+acionar agente especializado
+chamar MCP Tool Router
+executar RAG
+chamar LLM
+executar guardrails de saída
+executar judges
+persistir memória e checkpoint
+emitir telemetria
+retornar resposta padronizada
+```
+
+O framework deve ser protegido contra payloads brutos de canal.
+
+---
+
+### 5.1.1.4. Contrato operacional atual: GatewayRequest
+
+Na versão atual do backend, o endpoint `/gateway/message` espera um envelope chamado aqui de `GatewayRequest`.
+
+Formato:
+
+```json
+{
+  "channel": "web",
+  "tenant_id": "default",
+  "agent_id": "telecom_contas",
+  "payload": {
+    "message": "Quero consultar minha fatura",
+    "session_id": "curl-contract-test-001",
+    "user_id": "user-curl-001",
+    "message_id": "msg-curl-contract-001",
+    "customer_key": "11999999999",
+    "contract_key": "3000131180",
+    "interaction_key": "301953872",
+    "session_key": "curl-contract-test-001",
+    "business_context": {
+      "customer_key": "11999999999",
+      "contract_key": "3000131180",
+      "interaction_key": "301953872",
+      "session_key": "curl-contract-test-001"
+    },
+    "metadata": {
+      "source": "curl",
+      "request_id": "req-curl-contract-001"
+    }
+  }
+}
+```
+
+Schema conceitual:
+
+```python
+from typing import Any
+from pydantic import BaseModel
+
+
+class GatewayRequest(BaseModel):
+    channel: str = "web"
+    payload: dict[str, Any]
+    agent_id: str | None = None
+    tenant_id: str | None = None
+```
+
+O Channel Gateway, interno ou externo, deve produzir esse formato antes de entregar a mensagem ao workflow.
+
+---
+
+### 5.1.1.5. Channel Gateway interno
+
+### 5.1.1.5.1. Definição
+
+O **Channel Gateway interno** é a implementação embutida dentro do backend do Agent Framework.
+
+Neste modo, o próprio backend recebe a requisição e executa a normalização.
+
+Fluxo:
+
+```text
+Frontend / Canal simples
+  ↓
+POST /gateway/message
+  ↓
+Agent Framework Backend
+  ↓
+ChannelGateway.normalize()
+  ↓
+IdentityResolver
+  ↓
+SessionRepository
+  ↓
+LangGraph Workflow
+  ↓
+Resposta
+```
+
+Representação:
+
+```text
+┌──────────────────────────────────────────────────────┐
+│ Agent Framework Backend                              │
+│                                                      │
+│  ┌──────────────────────┐                            │
+│  │ Channel Gateway      │                            │
+│  │ interno              │                            │
+│  └──────────┬───────────┘                            │
+│             ↓                                        │
+│  ┌──────────────────────┐                            │
+│  │ Identity Resolver    │                            │
+│  └──────────┬───────────┘                            │
+│             ↓                                        │
+│  ┌──────────────────────┐                            │
+│  │ LangGraph Workflow   │                            │
+│  └──────────────────────┘                            │
+└──────────────────────────────────────────────────────┘
+```
+
+---
+
+### 5.1.1.5.2. Quando usar Channel Gateway interno
+
+Use o modo interno quando:
+
+```text
+o ambiente é local
+o objetivo é demonstração
+o canal é simples
+o payload é controlado
+o time do framework também controla o frontend
+o projeto é um MVP
+o cliente ainda não definiu time de canais
+```
+
+Exemplos:
+
+```text
+agent_frontend local
+curl
+Postman
+testes automatizados
+demonstração para cliente
+laboratório de desenvolvimento
+```
+
+---
+
+### 5.1.1.5.3. Vantagens do modo interno
+
+```text
+mais simples para começar
+menos serviços para subir
+menos infraestrutura
+mais fácil de testar localmente
+bom para demos e tutoriais
+reduz atrito para novos desenvolvedores
+```
+
+---
+
+### 5.1.1.5.4. Limitações do modo interno
+
+O modo interno não é ideal quando existem muitos canais ou canais proprietários.
+
+Riscos:
+
+```text
+framework começa a acumular parsers de canal
+time do framework vira responsável por payload de WhatsApp, Teams, URA etc.
+mudanças externas quebram o backend
+regras de autenticação de canais entram no core
+deploy do framework passa a depender de mudanças de canal
+responsabilidade arquitetural fica misturada
+```
+
+O problema principal é a manutenção.
+
+Se cada novo canal exigir alteração no backend do framework, o framework deixa de ser um motor genérico e vira uma coleção de integrações específicas.
+
+---
+
+### 5.1.1.6. Channel Gateway externo
+
+### 5.1.1.6.1. Definição
+
+O **Channel Gateway externo** é um serviço independente, fora do backend do Agent Framework.
+
+Ele é responsável por receber payloads específicos de canais e convertê-los para o contrato operacional aceito pelo framework.
+
+Fluxo:
+
+```text
+Canal externo
+  ↓
+External Channel Gateway
+  ↓
+GatewayRequest
+  ↓
+Agent Framework Backend
+  ↓
+LangGraph Workflow
+  ↓
+ChannelResponse atual
+  ↓
+External Channel Gateway
+  ↓
+Resposta no canal original
+```
+
+Representação:
+
+```text
+┌─────────────────────────────┐
+│ Canal externo               │
+│ WhatsApp / Voice / Teams    │
+└──────────────┬──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ External Channel Gateway    │
+│ Adapter do canal            │
+│ Auth                        │
+│ Parser                      │
+│ Normalização                │
+└──────────────┬──────────────┘
+               ↓ GatewayRequest
+┌─────────────────────────────┐
+│ Agent Framework Backend     │
+│ /gateway/message            │
+│ LangGraph / Agents / MCP    │
+└──────────────┬──────────────┘
+               ↓ ChannelResponse
+┌─────────────────────────────┐
+│ External Channel Gateway    │
+│ Tradução da resposta        │
+└──────────────┬──────────────┘
+               ↓
+┌─────────────────────────────┐
+│ Canal externo               │
+└─────────────────────────────┘
+```
+
+---
+
+### 5.1.1.6.2. Quando usar Channel Gateway externo
+
+Use o modo externo quando:
+
+```text
+o ambiente é enterprise
+existem múltiplos canais
+existe uma equipe de canais
+o cliente possui canais proprietários
+o payload do canal não é conhecido pelo time do framework
+há autenticação específica por canal
+há requisitos de segurança ou compliance
+há rate limit, retry e idempotência próprios do canal
+a equipe do framework não deve manter adapters específicos
+```
+
+Exemplos:
+
+```text
+WhatsApp oficial
+URA corporativa
+Genesys
+Twilio
+Microsoft Teams
+Zendesk
+Salesforce
+aplicativo mobile do cliente
+portal legado
+canal proprietário de atendimento
+```
+
+---
+
+### 5.1.1.6.3. Vantagens do modo externo
+
+```text
+separa responsabilidades
+delega manutenção de canais
+protege o framework
+evita acoplamento com APIs externas
+permite times diferentes evoluírem em ritmos diferentes
+facilita governança enterprise
+permite deploy separado
+permite autenticação específica por canal
+permite observabilidade própria por canal
+```
+
+A ideia principal é:
+
+```text
+Time de canais cuida do canal.
+Time do framework cuida do motor de agentes.
+```
+
+---
+
+### 5.1.1.6.4. Responsabilidade da equipe dona do Channel Gateway externo
+
+A equipe dona do gateway externo deve implementar:
+
+```text
+endpoint público do canal
+validação de assinatura/autenticação
+controle de rate limit
+deduplicação de eventos do canal
+tratamento de retry
+parser do payload bruto
+extração de texto
+extração de anexos
+extração de IDs técnicos
+mapeamento para customer_key, contract_key etc.
+montagem do GatewayRequest
+chamada ao Agent Framework
+tratamento da resposta
+tradução da resposta para o canal original
+logs e métricas do canal
+```
+
+---
+
+### 5.1.1.6.5. Responsabilidade da equipe do Agent Framework
+
+A equipe do framework deve fornecer:
+
+```text
+contrato GatewayRequest
+contrato de resposta
+documentação dos campos aceitos
+exemplos de curl
+schemas Pydantic
+erros padronizados
+endpoint estável
+versionamento do contrato
+regras de autenticação entre gateway externo e framework
+observabilidade do workflow
+```
+
+A equipe do framework não deve assumir a manutenção do payload bruto do canal.
+
+---
+
+### 5.1.1.7. Comparativo entre Channel Gateway interno e externo
+
+| Critério | Interno | Externo |
+|---|---|---|
+| Onde roda | Dentro do backend do framework | Serviço separado |
+| Melhor uso | Demo, lab, MVP | Produção enterprise |
+| Dono típico | Time do framework | Time de canais/integração |
+| Payload bruto entra no framework? | Pode entrar em cenários simples | Não deve entrar |
+| Escalabilidade organizacional | Baixa/Média | Alta |
+| Acoplamento com canal | Maior | Menor |
+| Deploy | Junto com framework | Independente |
+| Segurança por canal | Limitada ao backend | Especializada por canal |
+| Manutenção de parsers | Framework | Equipe do canal |
+| Recomendação para produção | Apenas casos simples | Recomendado |
+
+---
+
+### 5.1.1.8. Fluxo detalhado com Channel Gateway interno
+
+```text
+1. Frontend envia POST /gateway/message.
+2. Backend recebe GatewayRequest.
+3. ChannelGateway.normalize() extrai:
+   - message
+   - session_id
+   - user_id
+   - message_id
+   - business_context
+   - metadata
+4. IdentityResolver complementa chaves de negócio.
+5. SessionRepository resolve conversation_key.
+6. LangGraph inicia workflow.
+7. Guardrails de entrada executam.
+8. Router decide intent e route.
+9. Agente especializado executa.
+10. MCP Tool Router chama ferramentas, se necessário.
+11. RAG consulta documentos, se necessário.
+12. LLM gera resposta, se necessário.
+13. Guardrails de saída executam.
+14. Judges avaliam resposta.
+15. Framework retorna channel, session_id, text e metadata.
+```
+
+---
+
+### 5.1.1.9. Fluxo detalhado com Channel Gateway externo
+
+```text
+1. Canal externo envia evento para o gateway externo.
+2. Gateway externo valida autenticação/assinatura.
+3. Gateway externo deduplica mensagem usando ID do canal.
+4. Gateway externo interpreta o payload bruto.
+5. Gateway externo extrai texto, evento ou transcrição.
+6. Gateway externo extrai IDs técnicos do canal.
+7. Gateway externo mapeia dados para business_context.
+8. Gateway externo monta GatewayRequest.
+9. Gateway externo chama POST /gateway/message no Agent Framework.
+10. Framework executa workflow normalmente.
+11. Framework retorna ChannelResponse atual.
+12. Gateway externo transforma text/metadata em resposta do canal.
+13. Gateway externo envia resposta ao usuário no canal original.
+```
+
+---
+
+### 5.1.1.10. Exemplo: payload bruto de WhatsApp para GatewayRequest
+
+#### 5.1.1.10.1. Payload bruto hipotético
+
+```json
+{
+  "wa_id": "5511999999999",
+  "messages": [
+    {
+      "id": "wamid.123",
+      "type": "interactive",
+      "interactive": {
+        "button_reply": {
+          "id": "segunda_via_fatura",
+          "title": "Segunda via de fatura"
+        }
+      }
+    }
+  ]
+}
+```
+
+#### 5.1.1.10.2. GatewayRequest enviado ao framework
+
+```json
+{
+  "channel": "whatsapp",
+  "tenant_id": "default",
+  "agent_id": "telecom_contas",
+  "payload": {
+    "message": "Segunda via de fatura",
+    "session_id": "5511999999999",
+    "user_id": "5511999999999",
+    "message_id": "wamid.123",
+    "customer_key": "5511999999999",
+    "interaction_key": "wamid.123",
+    "session_key": "5511999999999",
+    "business_context": {
+      "customer_key": "5511999999999",
+      "interaction_key": "wamid.123",
+      "session_key": "5511999999999",
+      "metadata": {
+        "source_channel": "whatsapp",
+        "source_message_type": "interactive"
+      }
+    },
+    "metadata": {
+      "external_gateway": "customer-channel-gateway",
+      "original_channel": "whatsapp",
+      "original_message_id": "wamid.123",
+      "interactive_type": "button_reply",
+      "raw_reference": "segunda_via_fatura"
+    }
+  }
+}
+```
+
+---
+
+### 5.1.1.11. Exemplo: payload bruto de voz para GatewayRequest
+
+#### 5.1.1.11.1. Payload bruto hipotético
+
+```json
+{
+  "event": "voice.transcript.completed",
+  "call_id": "call-9988",
+  "caller": "+5511999999999",
+  "transcript": "minha fatura veio muito alta esse mês",
+  "confidence": 0.94,
+  "language": "pt-BR"
+}
+```
+
+#### 5.1.1.11.2. GatewayRequest enviado ao framework
+
+```json
+{
+  "channel": "voice",
+  "tenant_id": "default",
+  "agent_id": "telecom_contas",
+  "payload": {
+    "message": "minha fatura veio muito alta esse mês",
+    "session_id": "call-9988",
+    "user_id": "+5511999999999",
+    "message_id": "call-9988-turn-1",
+    "customer_key": "5511999999999",
+    "interaction_key": "call-9988",
+    "session_key": "call-9988",
+    "business_context": {
+      "customer_key": "5511999999999",
+      "interaction_key": "call-9988",
+      "session_key": "call-9988",
+      "metadata": {
+        "source_channel": "voice",
+        "transcription_provider": "speech-service",
+        "confidence": 0.94,
+        "language": "pt-BR"
+      }
+    },
+    "metadata": {
+      "external_gateway": "voice-channel-gateway",
+      "call_id": "call-9988",
+      "event": "voice.transcript.completed"
+    }
+  }
+}
+```
+
+---
+
+### 5.1.1.12. Exemplo de curl para validar o contrato
+
+```bash
+curl -s -X POST "http://localhost:8000/gateway/message" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channel": "web",
+    "tenant_id": "default",
+    "agent_id": "telecom_contas",
+    "payload": {
+      "message": "Quero consultar minha fatura",
+      "session_id": "curl-contract-test-001",
+      "user_id": "user-curl-001",
+      "message_id": "msg-curl-contract-001",
+      "customer_key": "11999999999",
+      "contract_key": "3000131180",
+      "interaction_key": "301953872",
+      "session_key": "curl-contract-test-001",
+      "business_context": {
+        "customer_key": "11999999999",
+        "contract_key": "3000131180",
+        "interaction_key": "301953872",
+        "session_key": "curl-contract-test-001",
+        "metadata": {
+          "source_channel": "web",
+          "frontend": "curl",
+          "version": "legacy-envelope-with-business-context"
+        }
+      },
+      "metadata": {
+        "source": "curl",
+        "request_id": "req-curl-contract-001"
+      }
+    }
+  }' | jq
+```
+
+---
+
+### 5.1.1.13. Resposta esperada do framework
+
+A resposta atual do framework retorna:
+
+```json
+{
+  "channel": "web",
+  "session_id": "default:telecom_contas:curl-contract-test-001",
+  "text": "[BillingAgent] Aqui estão as informações da sua fatura mais recente...",
+  "metadata": {
+    "tenant_id": "default",
+    "agent_id": "telecom_contas",
+    "original_session_id": "curl-contract-test-001",
+    "conversation_key": "default:telecom_contas:curl-contract-test-001",
+    "message_id": "msg-curl-contract-001",
+    "route": "billing_agent",
+    "intent": "billing_invoice_explanation",
+    "mcp_tools": [
+      "consultar_fatura",
+      "consultar_pagamentos"
+    ],
+    "mcp_results": [],
+    "business_context": {},
+    "guardrails": [],
+    "judges": []
+  }
+}
+```
+
+Campos principais:
+
+```text
+channel
+  Canal de origem.
+
+session_id
+  Sessão final resolvida pelo framework.
+
+text
+  Resposta final do agente.
+
+metadata
+  Dados técnicos, roteamento, contexto de negócio, MCP, guardrails, judges e rastreabilidade.
+```
+
+---
+
+### 5.1.1.14. Como o Channel Gateway externo deve tratar a resposta
+
+O framework retorna uma resposta orientada ao backend.
+
+O Channel Gateway externo deve traduzi-la para o formato esperado pelo canal.
+
+Exemplo:
+
+```text
+Framework:
+  text = "Encontrei sua fatura..."
+
+WhatsApp:
+  enviar mensagem de texto via API do WhatsApp
+
+Voice:
+  enviar texto para TTS
+
+Teams:
+  montar card ou mensagem Teams
+
+Email:
+  montar corpo de email
+
+CRM:
+  registrar resposta no atendimento
+```
+
+O gateway externo pode usar `metadata` para decidir comportamento adicional, por exemplo:
+
+```text
+requires_user_input
+missing_fields
+intent
+route
+handoff
+mcp_results
+guardrails
+```
+
+Mas a resposta principal ao usuário fica em:
+
+```text
+text
+```
+
+---
+
+### 5.1.1.15. Segurança e validação
+
+O Channel Gateway deve aplicar validações antes de chamar o framework.
+
+Validações recomendadas:
+
+```text
+autenticação do canal
+assinatura do webhook
+origem permitida
+rate limit
+tamanho máximo da mensagem
+tipo de evento permitido
+deduplicação por message_id
+normalização de texto
+remoção de HTML/script
+minimização de dados sensíveis
+controle de anexos
+```
+
+O Agent Framework também deve validar o contrato recebido.
+
+Validações recomendadas no framework:
+
+```text
+channel presente
+payload presente
+payload.message presente
+tenant_id válido
+agent_id válido ou roteável
+session_id válido
+business_context coerente
+message_id rastreável
+metadata dentro de tamanho aceitável
+```
+
+---
+
+### 5.1.1.16. Idempotência
+
+Canais externos podem reenviar eventos.
+
+Por isso, sempre que possível, o Channel Gateway deve preencher:
+
+```text
+payload.message_id
+```
+
+Chave recomendada de idempotência:
+
+```text
+tenant_id:channel:user_id:message_id
+```
+
+Exemplo:
+
+```text
+default:whatsapp:5511999999999:wamid.123
+```
+
+Comportamentos possíveis:
+
+```text
+primeira vez:
+  processa a mensagem
+
+reenvio duplicado:
+  ignora
+  retorna resposta anterior
+  retorna conflito controlado
+```
+
+A política pode ficar no Channel Gateway externo, no Agent Framework ou nos dois.
+
+---
+
+### 5.1.1.17. Relação com IdentityResolver
+
+O Channel Gateway envia dados canônicos no `payload` e em `business_context`.
+
+O `IdentityResolver` do framework pode complementar ou padronizar essas chaves.
+
+Exemplo:
+
+```text
+payload.customer_key
+payload.contract_key
+payload.interaction_key
+payload.session_key
+```
+
+Pode virar:
+
+```text
+metadata.business_context.customer_key
+metadata.business_context.contract_key
+metadata.business_context.interaction_key
+metadata.business_context.session_key
+```
+
+Regra recomendada:
+
+```text
+O Channel Gateway deve normalizar o que conhece.
+O IdentityResolver complementa o que faltar.
+```
+
+---
+
+### 5.1.1.18. Relação com MCP Parameter Mapping
+
+O Channel Gateway não deve conhecer o nome exato de cada parâmetro das tools MCP.
+
+Ele deve enviar chaves canônicas.
+
+Exemplo:
+
+```text
+customer_key
+contract_key
+interaction_key
+session_key
+```
+
+O framework, via `mcp_parameter_mapping.yaml`, traduz para os parâmetros esperados pelas tools.
+
+Exemplo:
+
+```yaml
+tools:
+  consultar_fatura:
+    map:
+      customer_key: msisdn
+      contract_key: invoice_id
+      interaction_key: ura_call_id
+      session_key: session_id
+```
+
+Fluxo:
+
+```text
+GatewayRequest.payload.business_context.customer_key
+  ↓
+AgentRuntime / MCP Tool Router
+  ↓
+mcp_parameter_mapping.yaml
+  ↓
+consultar_fatura.msisdn
+```
+
+Assim, o Channel Gateway não fica acoplado ao MCP Server.
+
+---
+
+### 5.1.1.19. Anti-patterns
+
+Evite estes padrões:
+
+```text
+Agente lendo payload bruto de WhatsApp.
+Workflow com if channel == "whatsapp".
+Guardrail dependendo de campos nativos de Teams.
+MCP Server recebendo payload inteiro do canal.
+Frontend enviando campos arbitrários fora de payload.
+Gateway externo chamando agente diretamente, pulando /gateway/message.
+Channel Gateway externo executando regra de negócio de agente.
+Framework sendo alterado a cada novo canal.
+Dados sensíveis ou tokens do canal enviados em metadata.
+```
+
+O desenho correto é:
+
+```text
+Canal específico
+  ↓
+Adapter específico
+  ↓
+GatewayRequest
+  ↓
+Agent Framework
+```
+
+---
+
+### 5.1.1.20. Versionamento do contrato
+
+Para ambientes enterprise, recomenda-se versionar o contrato.
+
+Exemplo:
+
+```json
+{
+  "channel": "web",
+  "tenant_id": "default",
+  "agent_id": "telecom_contas",
+  "payload": {
+    "message": "Quero consultar minha fatura",
+    "metadata": {
+      "contract_version": "gateway-request-v1"
+    }
+  }
+}
+```
+
+Ou no cabeçalho HTTP:
+
+```http
+X-Agent-Framework-Contract: gateway-request-v1
+```
+
+Regras recomendadas:
+
+```text
+mudanças compatíveis mantêm a mesma versão
+campos novos devem ser opcionais
+remoção de campos exige nova versão
+mudança semântica exige nova versão
+gateway externo deve declarar a versão usada
+framework deve rejeitar versões incompatíveis
+```
+
+---
+
+### 5.1.1.21. Observabilidade
+
+O Channel Gateway e o Agent Framework devem emitir rastreabilidade em níveis diferentes.
+
+#### 5.1.1.21.1. Observabilidade do Channel Gateway
+
+```text
+evento recebido do canal
+validação de assinatura
+deduplicação
+payload parseado
+GatewayRequest montado
+chamada ao framework
+resposta recebida
+resposta enviada ao canal
+erro de canal
+erro de autenticação
+erro de retry
+```
+
+#### 5.1.1.21.2. Observabilidade do Agent Framework
+
+```text
+GatewayRequest recebido
+ChannelGateway.normalize()
+IdentityResolver
+SessionRepository
+Guardrails
+Routing
+Agent execution
+MCP tools
+RAG
+LLM
+Output guardrails
+Judges
+Persistence
+Final response
+```
+
+A correlação deve usar:
+
+```text
+request_id
+message_id
+session_id
+conversation_key
+trace_id
+```
+
+---
+
+### 5.1.1.22. Recomendações de arquitetura
+
+#### 5.1.1.22.1. Para demos e desenvolvimento
+
+Use Channel Gateway interno.
+
+Motivos:
+
+```text
+menor complexidade
+menos serviços
+teste rápido
+melhor para tutorial
+facilita uso com curl e frontend local
+```
+
+#### 5.1.1.22.2. Para produção enterprise
+
+Use Channel Gateway externo.
+
+Motivos:
+
+```text
+separação de responsabilidade
+controle por equipe de canais
+segurança específica por canal
+deploy independente
+menor acoplamento
+melhor governança
+```
+
+#### 5.1.1.22.3. Regra de decisão
+
+```text
+Se o canal é simples e controlado pelo time do framework:
+  Channel Gateway interno pode ser suficiente.
+
+Se o canal é externo, proprietário, regulado ou mantido por outra equipe:
+  Channel Gateway externo é recomendado.
+```
+
+---
+
+### 5.1.1.23. Checklist para criar um Channel Gateway externo
+
+```text
+[ ] Definir quais canais serão atendidos.
+[ ] Documentar payload bruto de cada canal.
+[ ] Implementar validação de autenticação/assinatura.
+[ ] Implementar deduplicação por message_id.
+[ ] Extrair texto principal do usuário.
+[ ] Extrair anexos, se aplicável.
+[ ] Extrair session_id estável.
+[ ] Extrair user_id do canal.
+[ ] Mapear identificadores de negócio.
+[ ] Montar business_context canônico.
+[ ] Montar GatewayRequest.
+[ ] Chamar POST /gateway/message.
+[ ] Interpretar text da resposta.
+[ ] Traduzir resposta para o canal original.
+[ ] Tratar erro 400/401/403/422/429/500/503.
+[ ] Emitir logs e métricas.
+[ ] Versionar contrato usado.
+[ ] Criar testes com payloads reais do canal.
+```
+
+---
+
+### 5.1.1.24. Checklist para aceitar um novo canal no framework
+
+```text
+[ ] O canal envia GatewayRequest válido?
+[ ] O campo channel está padronizado?
+[ ] O campo payload.message está preenchido?
+[ ] O session_id é estável?
+[ ] O message_id é rastreável?
+[ ] O business_context usa chaves canônicas?
+[ ] Campos específicos do canal estão em payload.metadata?
+[ ] Nenhum payload bruto gigante está sendo enviado?
+[ ] Nenhum token ou segredo do canal entra no framework?
+[ ] A resposta text é suficiente para o canal responder ao usuário?
+[ ] O metadata é suficiente para debug e observabilidade?
+[ ] O erro 422 é tratado pelo gateway externo?
+```
+
+---
+
+### 5.1.1.25. Decisão arquitetural recomendada
+
+A decisão recomendada é:
+
+```text
+Channel Gateway deve ser uma capability do framework,
+mas não deve ser obrigatório como componente interno.
+```
+
+O framework deve suportar dois modos:
+
+```text
+Embedded Mode
+  Channel Gateway interno para demos, labs, MVPs e ambientes simples.
+
+External Mode
+  Channel Gateway externo para produção enterprise e responsabilidade delegada.
+```
+
+O contrato operacional atual entre Channel Gateway e Agent Framework é:
+
+```text
+GatewayRequest
+```
+
+E a resposta atual é:
+
+```text
+channel
+session_id
+text
+metadata
+```
+
+---
+
+### 5.1.1.26. Resumo final
+
+O Channel Gateway existe para proteger o Agent Framework.
+
+Sem essa camada:
+
+```text
+o agente precisa entender payloads externos
+o workflow acumula lógica de canais
+o framework vira uma coleção de adapters
+a manutenção de canais fica com o time errado
+cada novo canal ameaça quebrar o core
+```
+
+Com essa camada:
+
+```text
+cada canal é traduzido antes de entrar no framework
+o backend recebe GatewayRequest
+o agente trabalha com contexto normalizado
+o MCP recebe parâmetros canônicos
+a resposta volta em formato estável
+a responsabilidade de canais pode ser delegada
+```
+
+Regra final:
+
+```text
+Payload bruto pertence ao Channel Gateway.
+GatewayRequest pertence à fronteira do Agent Framework.
+Raciocínio e execução pertencem ao Agent Framework.
+```
+
+---
+
 ### 5.2. Responsabilidades do arquivo `app/agents/financeiro_agent.py`
 
 Esse arquivo deve conter a lógica específica do agente financeiro. Ele deve:
@@ -5648,6 +6903,8 @@ curl -X POST http://localhost:8000/debug/mcp/call/consultar_titulo_financeiro \
 
 ### 18.4. Subir Frontend para testes
 
+Install before the [npm](https://nodejs.org/) and:
+
 ```bash
 cd agent_framework_oci
 cd agent_frontend
@@ -8327,14 +9584,23 @@ Framework
 Uma sequência local completa pode ser:
 
 ```bash
+<<<<<<< HEAD
 # 1. Subir MCP do agente, se existir
 cd mcp_servers/meu_agente_mcp
 python -m uvicorn app.main:app --host 0.0.0.0 --port 9001 --reload
+=======
+# 1. Upload agent MCP, if any
+cd mcp_servers/telecom_mcp_server
+python -m uvicorn main:app --host 0.0.0.0 --port 8100 --reload
+
+cd mcp_servers/telecom_mcp_server
+python -m uvicorn main:app --host 0.0.0.0 --port 8200 --reload
+>>>>>>> 8b44748 (ajuste documento)
 
 # 2. Subir backend do agente Contas
 cd agent_template_backend
 cp .env.example .env
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 # 3. Subir Agent Gateway
 cd agent_gateway
