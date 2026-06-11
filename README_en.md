@@ -4609,6 +4609,220 @@ args_schema of the tool
 actual signature on the MCP Server
 ```
 
+# 13.4 MCP Parameter Extraction (extract)
+
+The `extract` feature allows the framework to extract additional parameters from the user's message before invoking the MCP Server.
+
+These parameters are not part of the Business Context (`customer_key`, `contract_key`, etc.), but rather business-specific information that may be required by a particular tool.
+
+Examples include:
+
+- Reference month
+- Number of installments
+- Desired period
+- Order number mentioned in the conversation
+- Tax ID mentioned by the user
+- Quantity of items
+- Desired date
+
+---
+
+## 13.4.1 When to Use
+
+Use `extract` when:
+
+1. The information is present in the user's natural language.
+2. The information does not belong to the Identity Resolver.
+3. The information is required by a specific tool.
+4. You want the MCP Server to receive the value already structured.
+
+Example:
+
+User:
+
+```text
+I want my October invoice
+```
+
+The MCP Server should not need to interpret the sentence itself.
+
+The framework should send:
+
+```python
+args["reference_month"] = 10
+```
+
+---
+
+## 13.4.2 When NOT to Use
+
+Do not use `extract` for:
+
+- customer_key
+- contract_key
+- interaction_key
+- account_key
+- resource_key
+- session_key
+
+These values belong to the identity resolution mechanism and should be resolved through:
+
+```text
+identity.yaml
+```
+
+---
+
+## 13.4.3 Configuration Example
+
+```yaml
+mcp_parameter_mapping:
+  tools:
+
+    invoice_lookup:
+
+      map:
+        customer_key: msisdn
+        contract_key: invoice_id
+        interaction_key: interaction_id
+        session_key: session_id
+
+      extract:
+        reference_month:
+          from: message
+          type: int
+          strategy: llm
+          description: >
+            Extract the month referenced in the user's message.
+            January=1, February=2, March=3,
+            April=4, May=5, June=6,
+            July=7, August=8, September=9,
+            October=10, November=11, December=12.
+```
+
+---
+
+## 13.4.4 Execution Flow
+
+```text
+User Message
+      │
+      ▼
+Intent Router
+      │
+      ▼
+Selected Tool
+      │
+      ▼
+MCP Parameter Mapping
+      │
+      ▼
+Check for "extract" definitions
+      │
+      ▼
+Execute LLM Extraction
+      │
+      ▼
+Inject Extracted Parameters
+      │
+      ▼
+Invoke MCP Server
+```
+
+---
+
+## 13.4.5 Practical Example
+
+User message:
+
+```text
+I want my October invoice
+```
+
+Extraction result:
+
+```json
+{
+  "reference_month": 10
+}
+```
+
+Payload sent to MCP:
+
+```json
+{
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "reference_month": 10
+}
+```
+
+Inside the MCP tool:
+
+```python
+month = args.get("reference_month")
+```
+
+Result:
+
+```python
+10
+```
+
+---
+
+## 13.4.6 Benefits
+
+### Simpler MCP Servers
+
+Without extraction:
+
+```python
+query = args.get("query")
+
+if "October" in query:
+    month = 10
+```
+
+With extraction:
+
+```python
+month = args.get("reference_month")
+```
+
+---
+
+## 13.4.7 Centralization
+
+All extraction intelligence remains inside the framework.
+
+The MCP Server is responsible only for business logic.
+
+---
+
+## 13.4.8 Reusability
+
+The same extraction strategy can be reused by multiple tools.
+
+---
+
+## 13.4.9 Best Practices
+
+- Use stable parameter names.
+- Keep extraction logic declarative.
+- Avoid hardcoded parsing rules inside MCP Servers.
+- Use `extract` only for tool-specific information.
+- Keep identity resolution and parameter extraction separate.
+
+```text
+identity.yaml
+    → identity resolution
+
+mcp_parameter_mapping.yaml
+    → tool parameters and extraction rules
+```
+
+
 ---
 
 ## 14. Configuring business identity

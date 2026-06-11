@@ -4624,6 +4624,220 @@ args_schema da tool
 assinatura real no MCP Server
 ```
 
+### 13.4 MCP Parameter Extraction (extract)
+
+O recurso `extract` permite que o framework extraia parâmetros adicionais da mensagem do usuário **antes da chamada do MCP Server**.
+
+Esses parâmetros não fazem parte do Business Context (`customer_key`, `contract_key`, etc.), mas são informações de negócio que podem ser necessárias para uma tool específica.
+
+Exemplos:
+
+- mês de referência
+- número de parcelas
+- período desejado
+- código do pedido citado na conversa
+- CPF mencionado na mensagem
+- quantidade de itens
+- data desejada
+
+---
+
+### 13.4.1 Quando utilizar
+
+Utilize `extract` quando:
+
+1. A informação está presente na linguagem natural do usuário.
+2. A informação não pertence ao Identity Resolver.
+3. A informação é necessária para uma tool específica.
+4. Você deseja que o MCP receba o valor já estruturado.
+
+Exemplo:
+
+Usuário:
+
+```text
+Quero minha fatura de outubro
+```
+
+O MCP não deveria precisar interpretar a frase.
+
+O framework deve enviar:
+
+```python
+args["mes_referencia"] = 10
+```
+
+---
+
+### 13.4.2 Quando NÃO utilizar
+
+Não utilize `extract` para:
+
+- customer_key
+- contract_key
+- interaction_key
+- account_key
+- resource_key
+- session_key
+
+Essas informações pertencem ao mecanismo de identidade e devem ser resolvidas pelo:
+
+```text
+identity.yaml
+```
+
+---
+
+### 13.4.3 Exemplo de configuração
+
+```yaml
+mcp_parameter_mapping:
+  tools:
+
+    consultar_fatura:
+
+      map:
+        customer_key: msisdn
+        contract_key: invoice_id
+        interaction_key: ura_call_id
+        session_key: session_id
+
+      extract:
+        mes_referencia:
+          from: message
+          type: int
+          strategy: llm
+          description: >
+            Extrair mês citado na mensagem.
+            janeiro=1, fevereiro=2, março=3,
+            abril=4, maio=5, junho=6,
+            julho=7, agosto=8, setembro=9,
+            outubro=10, novembro=11, dezembro=12.
+```
+
+---
+
+### 13.4.4 Fluxo de execução
+
+```text
+Mensagem do usuário
+        │
+        ▼
+Intent Router
+        │
+        ▼
+Tool escolhida
+(consultar_fatura)
+        │
+        ▼
+MCP Parameter Mapping
+        │
+        ▼
+Verifica se existe "extract"
+        │
+        ▼
+Executa LLM Extraction
+        │
+        ▼
+Adiciona parâmetros extraídos
+        │
+        ▼
+Chama MCP Server
+```
+
+---
+
+### 13.4.5 Exemplo prático
+
+Mensagem:
+
+```text
+Quero minha fatura de outubro
+```
+
+Resultado da extração:
+
+```json
+{
+  "mes_referencia": 10
+}
+```
+
+Payload enviado ao MCP:
+
+```json
+{
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180",
+  "mes_referencia": 10
+}
+```
+
+No MCP:
+
+```python
+mes = args.get("mes_referencia")
+```
+
+Resultado:
+
+```python
+10
+```
+
+---
+
+### 13.4.6 Benefícios
+
+### MCP mais simples
+
+Sem extração:
+
+```python
+query = args.get("query")
+
+if "outubro" in query:
+    mes = 10
+```
+
+Com extração:
+
+```python
+mes = args.get("mes_referencia")
+```
+
+---
+
+### 13.4.7 Centralização
+
+Toda a inteligência de extração fica no framework.
+
+O MCP fica responsável apenas pela lógica de negócio.
+
+---
+
+### 13.4.7 Reuso
+
+A mesma estratégia pode ser utilizada por várias tools.
+
+---
+
+### 13.4.8 Boas práticas
+
+- Utilizar nomes de parâmetros estáveis.
+- Manter a lógica de extração declarativa.
+- Evitar regras hardcoded dentro dos MCP Servers.
+- Utilizar `extract` apenas para informações específicas da tool.
+- Manter identidade e extração separadas.
+
+```text
+identity.yaml
+    → identidade
+
+mcp_parameter_mapping.yaml
+    → parâmetros da tool
+```
+
 ---
 
 ## 14. Configurando identidade de negócio

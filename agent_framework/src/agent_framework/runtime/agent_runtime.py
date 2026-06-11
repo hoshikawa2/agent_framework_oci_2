@@ -331,6 +331,13 @@ class AgentRuntimeMixin:
         if not router:
             return {"ok": False, "tool_name": tool_name, "error": "MCP Tool Router indisponível"}
         runtime = self.get_runtime_context(state)
+        # Garante que o MCPToolRouter possa executar extrações LLM configuradas
+        # no mcp_parameter_mapping.yaml imediatamente antes da chamada MCP.
+        if getattr(router, "llm", None) is None and getattr(self, "llm", None) is not None:
+            try:
+                router.llm = self.llm
+            except Exception:
+                pass
         res = await router.call(
             tool_name,
             arguments or {},
