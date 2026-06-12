@@ -397,6 +397,14 @@ class AgentRuntimeMixin:
 
         Fonte da verdade: config/tools.yaml, no bloco `cache` da própria tool.
         Não existe regra por prefixo, idioma ou nome da ferramenta.
+
+        A chave de cache é baseada em:
+        - tool_name
+        - todos os argumentos efetivamente enviados ao MCP.
+
+        Não entram na chave: session_id, request_id, trace_id, timestamp, intent,
+        agent_id ou business_context completo, pois esses valores tendem a mudar
+        entre chamadas e impediriam cache HIT.
         """
         settings = getattr(self, "settings", None)
         default_ttl = int(
@@ -443,16 +451,47 @@ class AgentRuntimeMixin:
         policy = self._mcp_cache_policy(tool_name)
         return bool(policy.get("enabled", False) and policy.get("cacheable", False))
 
-    def _mcp_cache_key(self, tool_name: str, arguments: dict[str, Any], state: dict[str, Any]) -> str:
-        runtime = self.get_runtime_context(state)
-        payload = {
-            "tool_name": tool_name,
-            "tenant_id": state.get("tenant_id") or runtime.session.get("tenant_id"),
-            "agent_id": state.get("agent_id") or state.get("route") or getattr(self, "name", None),
-            "intent": state.get("intent"),
-            "business_context": runtime.business_context,
-            "arguments": arguments,
+    def _normalize_mcp_cache_value(self, value: Any) -> Any:
+        """Normaliza valores para gerar uma cache key estável.
+
+        Remove variações acidentais, como espaços em strings, e ordena estruturas
+        aninhadas. Isso evita MISS quando a semântica da chamada é a mesma.
+        """
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            return {
+                str(k): self._normalize_mcp_cache_value(v)
+                for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+                if v not in _EMPTY_VALUES
+            }
+        if isinstance(value, (list, tuple)):
+            return [self._normalize_mcp_cache_value(v) for v in value if v not in _EMPTY_VALUES]
+        return value
+
+    def _mcp_cache_key_payload(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Monta o payload determinístico usado na chave de cache MCP.
+
+        Regra principal:
+        mesma tool + mesmos atributos relevantes enviados ao MCP = mesma chave.
+
+        A chave usa todos os argumentos recebidos pela tool, exceto valores vazios.
+        Como esses argumentos já passaram pelo mcp_parameter_mapping.yaml, args_schema
+        e Tool Router, eles representam o contrato efetivo da chamada MCP.
+        """
+        key_arguments = {
+            str(k): v
+            for k, v in (arguments or {}).items()
+            if v not in _EMPTY_VALUES
         }
+
+        return {
+            "tool_name": tool_name,
+            "arguments": self._normalize_mcp_cache_value(key_arguments),
+        }
+
+    def _mcp_cache_key(self, tool_name: str, arguments: dict[str, Any], state: dict[str, Any] | None = None) -> str:
+        payload = self._mcp_cache_key_payload(tool_name, arguments)
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         return "mcp:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -485,15 +524,16 @@ class AgentRuntimeMixin:
             return await self._call_mcp_tool_uncached(tool_name, args, state)
 
         key = self._mcp_cache_key(tool_name, args, state)
+        key_payload = self._mcp_cache_key_payload(tool_name, args)
         cached = await self._cache_get(key)
         if cached is not None:
-            logger.info("MCP cache hit", extra={"tool_name": tool_name, "cache_key": key})
+            logger.info("MCP cache hit", extra={"tool_name": tool_name, "cache_key": key, "cache_key_payload": key_payload})
             if telemetry:
                 await telemetry.event("cache.mcp.hit", {"tool_name": tool_name, "key": key}, kind="cache")
             await self._emit_ic(
                 "IC.MCP_CACHE_HIT",
                 state,
-                {"tool_name": tool_name, "cache_key": key},
+                {"tool_name": tool_name, "cache_key": key, "cache_key_payload": key_payload},
                 component="agent_runtime.mcp_cache",
             )
             if isinstance(cached, dict):
@@ -501,13 +541,13 @@ class AgentRuntimeMixin:
                 cached.setdefault("cache_key", key)
             return cached
 
-        logger.info("MCP cache miss", extra={"tool_name": tool_name, "cache_key": key})
+        logger.info("MCP cache miss", extra={"tool_name": tool_name, "cache_key": key, "cache_key_payload": key_payload})
         if telemetry:
             await telemetry.event("cache.mcp.miss", {"tool_name": tool_name, "key": key}, kind="cache")
         await self._emit_ic(
             "IC.MCP_CACHE_MISS",
             state,
-            {"tool_name": tool_name, "cache_key": key},
+            {"tool_name": tool_name, "cache_key": key, "cache_key_payload": key_payload},
             component="agent_runtime.mcp_cache",
         )
 
@@ -518,21 +558,21 @@ class AgentRuntimeMixin:
         if result.get("ok"):
             ttl = self._mcp_cache_ttl_seconds(tool_name)
             await self._cache_set(key, result, ttl)
-            logger.info("MCP cache set", extra={"tool_name": tool_name, "cache_key": key, "ttl_seconds": ttl})
+            logger.info("MCP cache set", extra={"tool_name": tool_name, "cache_key": key, "ttl_seconds": ttl, "cache_key_payload": key_payload})
             if telemetry:
                 await telemetry.event("cache.mcp.set", {"tool_name": tool_name, "key": key, "ttl_seconds": ttl}, kind="cache")
             await self._emit_ic(
                 "IC.MCP_CACHE_SET",
                 state,
-                {"tool_name": tool_name, "cache_key": key, "ttl_seconds": ttl},
+                {"tool_name": tool_name, "cache_key": key, "ttl_seconds": ttl, "cache_key_payload": key_payload},
                 component="agent_runtime.mcp_cache",
             )
         else:
-            logger.info("MCP cache not stored", extra={"tool_name": tool_name, "cache_key": key, "reason": "tool_result_not_ok"})
+            logger.info("MCP cache not stored", extra={"tool_name": tool_name, "cache_key": key, "reason": "tool_result_not_ok", "cache_key_payload": key_payload})
             await self._emit_ic(
                 "IC.MCP_CACHE_NOT_STORED",
                 state,
-                {"tool_name": tool_name, "cache_key": key, "reason": "tool_result_not_ok"},
+                {"tool_name": tool_name, "cache_key": key, "reason": "tool_result_not_ok", "cache_key_payload": key_payload},
                 component="agent_runtime.mcp_cache",
             )
         return result
