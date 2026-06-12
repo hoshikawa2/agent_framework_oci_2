@@ -4436,6 +4436,9 @@ tools:
     description: Consults a financial security by customer and contract.
     mcp_server: telecom
     enabled: true
+    cache:
+      enabled: true
+      ttl_seconds: 600
     args_schema:
       customer_id: string
       contract_id: string
@@ -4444,6 +4447,9 @@ tools:
     description: Consults financial payments by customer.
     mcp_server: telecom
     enabled: true
+    cache:
+      enabled: true
+      ttl_seconds: 300
     args_schema:
       customer_id: string
 ```

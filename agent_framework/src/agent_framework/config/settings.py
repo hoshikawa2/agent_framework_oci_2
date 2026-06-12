@@ -134,6 +134,8 @@ class Settings(BaseSettings):
 
     # MCP / Tooling
     ENABLE_MCP_TOOLS: bool = True
+    ENABLE_MCP_CACHE: bool = True
+    MCP_CACHE_TTL_SECONDS: int = 300
     MCP_SERVERS_CONFIG_PATH: str = './config/mcp_servers.yaml'
     TOOLS_CONFIG_PATH: str = './config/tools.yaml'
     IDENTITY_CONFIG_PATH: str = './config/identity.yaml'

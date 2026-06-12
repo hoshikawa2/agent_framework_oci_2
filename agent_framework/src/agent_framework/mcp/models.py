@@ -24,6 +24,13 @@ class MCPToolConfig(BaseModel):
     confirmation_required: bool = False
     execution_policy: dict[str, Any] = Field(default_factory=dict)
 
+    # Política declarativa de cache da tool, lida diretamente de config/tools.yaml.
+    # Exemplo:
+    # cache:
+    #   enabled: true
+    #   ttl_seconds: 600
+    cache: dict[str, Any] = Field(default_factory=dict)
+
 class MCPToolResult(BaseModel):
     tool_name: str
     server_name: str

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+
 from agent_framework.memory.summary_memory import MemoryContext, render_recent_messages
 
+
+logger = logging.getLogger(__name__)
 
 _EMPTY_VALUES = (None, "", {}, [])
 
@@ -316,9 +321,6 @@ class AgentRuntimeMixin:
             if isinstance(execution_policy, dict):
                 required.extend(execution_policy.get("requires") or [])
                 confirmation_required = confirmation_required or bool(execution_policy.get("confirmation_required"))
-        # Fallback de segurança para nomes de tools que indicam ação mutável.
-        if not required and (tool_name.startswith("registrar_") or tool_name.startswith("solicitar_") or tool_name.startswith("cancelar_")):
-            required = ["action_text"] if tool_name.startswith("registrar_") else []
         for field_name in required:
             if arguments.get(field_name) in _EMPTY_VALUES:
                 return False, f"Campo obrigatório ausente para execução da tool: {field_name}"
@@ -326,25 +328,214 @@ class AgentRuntimeMixin:
             return False, "Tool exige confirmação explícita antes da execução"
         return True, None
 
-    async def _call_mcp_tool(self, tool_name: str, arguments: dict[str, Any] | None, state: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_cache_enabled(self) -> bool:
+        """Retorna se o cache MCP está habilitado globalmente.
+
+        A chave global fica no .env/settings. A decisão por tool fica em
+        config/tools.yaml, dentro do próprio cadastro da tool.
+        """
+        settings = getattr(self, "settings", None)
+        return bool(getattr(settings, "ENABLE_MCP_CACHE", True))
+
+    def _mcp_tool_cache_config(self, tool_name: str) -> dict[str, Any]:
+        """Lê a política de cache diretamente da tool em tools.yaml.
+
+        Estrutura esperada no catálogo atual:
+
+        tools:
+          consultar_fatura:
+            description: ...
+            mcp_server: telecom
+            enabled: true
+            cache:
+              enabled: true
+              ttl_seconds: 600
+            args_schema:
+              msisdn: string
+
+        Compatibilidade mantida:
+        - cache: true|false
+        - cache.enabled
+        - cache.ttl_seconds
+        - cache.ttl
+        - cache_ttl_seconds
+        - execution_policy.cache/cacheable/cache_ttl_seconds
+
+        Por segurança, o default é NÃO cachear.
+        """
+        cfg = self._tool_config(tool_name)
+        if cfg is None:
+            return {}
+
+        raw_cache = getattr(cfg, "cache", None) or {}
+        policy: dict[str, Any] = {}
+
+        if isinstance(raw_cache, bool):
+            policy["enabled"] = raw_cache
+        elif isinstance(raw_cache, dict):
+            policy.update(raw_cache)
+
+        # Compatibilidade com campos antigos/compactos, sem mudar o tools.yaml atual.
+        execution_policy = getattr(cfg, "execution_policy", None) or {}
+        if isinstance(execution_policy, dict):
+            if "cache" in execution_policy and "enabled" not in policy:
+                policy["enabled"] = execution_policy.get("cache")
+            if "cacheable" in execution_policy and "enabled" not in policy:
+                policy["enabled"] = execution_policy.get("cacheable")
+            if "cache_ttl_seconds" in execution_policy and "ttl_seconds" not in policy:
+                policy["ttl_seconds"] = execution_policy.get("cache_ttl_seconds")
+
+        if "cache_ttl_seconds" in policy and "ttl_seconds" not in policy:
+            policy["ttl_seconds"] = policy.get("cache_ttl_seconds")
+        if "ttl" in policy and "ttl_seconds" not in policy:
+            policy["ttl_seconds"] = policy.get("ttl")
+
+        return policy
+
+    def _mcp_cache_policy(self, tool_name: str) -> dict[str, Any]:
+        """Resolve a política final de cache da tool MCP.
+
+        Fonte da verdade: config/tools.yaml, no bloco `cache` da própria tool.
+        Não existe regra por prefixo, idioma ou nome da ferramenta.
+        """
+        settings = getattr(self, "settings", None)
+        default_ttl = int(
+            getattr(settings, "MCP_CACHE_TTL_SECONDS", None)
+            or getattr(settings, "CACHE_TTL_SECONDS", 300)
+            or 300
+        )
+        raw = self._mcp_tool_cache_config(tool_name)
+
+        enabled = bool(raw.get("enabled", False)) if isinstance(raw, dict) else False
+        ttl_seconds = raw.get("ttl_seconds", default_ttl) if isinstance(raw, dict) else default_ttl
+        try:
+            ttl_seconds = int(ttl_seconds or default_ttl)
+        except Exception:
+            ttl_seconds = default_ttl
+
+        return {
+            "enabled": enabled,
+            "cacheable": enabled,
+            "ttl_seconds": ttl_seconds,
+        }
+
+    def _mcp_cache_ttl_seconds(self, tool_name: str | None = None) -> int:
+        if tool_name:
+            return int(self._mcp_cache_policy(tool_name).get("ttl_seconds") or 300)
+        settings = getattr(self, "settings", None)
+        return int(
+            getattr(settings, "MCP_CACHE_TTL_SECONDS", None)
+            or getattr(settings, "CACHE_TTL_SECONDS", 300)
+            or 300
+        )
+
+    def _is_mcp_tool_cacheable(self, tool_name: str, arguments: dict[str, Any]) -> bool:
+        """Define se uma tool MCP pode ser cacheada com segurança.
+
+        A decisão vem exclusivamente de config/tools.yaml:
+
+        cache:
+          enabled: true
+          ttl_seconds: 600
+        """
+        if not self._mcp_cache_enabled():
+            return False
+        policy = self._mcp_cache_policy(tool_name)
+        return bool(policy.get("enabled", False) and policy.get("cacheable", False))
+
+    def _mcp_cache_key(self, tool_name: str, arguments: dict[str, Any], state: dict[str, Any]) -> str:
+        runtime = self.get_runtime_context(state)
+        payload = {
+            "tool_name": tool_name,
+            "tenant_id": state.get("tenant_id") or runtime.session.get("tenant_id"),
+            "agent_id": state.get("agent_id") or state.get("route") or getattr(self, "name", None),
+            "intent": state.get("intent"),
+            "business_context": runtime.business_context,
+            "arguments": arguments,
+        }
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        return "mcp:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    async def _call_mcp_tool_uncached(self, tool_name: str, arguments: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
         router = getattr(self, "tool_router", None)
         if not router:
             return {"ok": False, "tool_name": tool_name, "error": "MCP Tool Router indisponível"}
         runtime = self.get_runtime_context(state)
-        # Garante que o MCPToolRouter possa executar extrações LLM configuradas
-        # no mcp_parameter_mapping.yaml imediatamente antes da chamada MCP.
-        if getattr(router, "llm", None) is None and getattr(self, "llm", None) is not None:
-            try:
-                router.llm = self.llm
-            except Exception:
-                pass
         res = await router.call(
             tool_name,
-            arguments or {},
+            arguments,
             business_context=runtime.business_context,
             original_context=runtime.as_original_context(),
         )
         return res.model_dump(mode="json") if hasattr(res, "model_dump") else dict(res)
+
+    async def _call_mcp_tool(self, tool_name: str, arguments: dict[str, Any] | None, state: dict[str, Any]) -> dict[str, Any]:
+        args = arguments or {}
+        cacheable = self._is_mcp_tool_cacheable(tool_name, args) and getattr(self, "cache", None) is not None
+        telemetry = getattr(self, "telemetry", None)
+
+        if not cacheable:
+            logger.info("MCP cache bypass", extra={"tool_name": tool_name, "reason": "disabled_or_not_configured"})
+            await self._emit_ic(
+                "IC.MCP_CACHE_BYPASS",
+                state,
+                {"tool_name": tool_name, "reason": "disabled_or_not_configured"},
+                component="agent_runtime.mcp_cache",
+            )
+            return await self._call_mcp_tool_uncached(tool_name, args, state)
+
+        key = self._mcp_cache_key(tool_name, args, state)
+        cached = await self._cache_get(key)
+        if cached is not None:
+            logger.info("MCP cache hit", extra={"tool_name": tool_name, "cache_key": key})
+            if telemetry:
+                await telemetry.event("cache.mcp.hit", {"tool_name": tool_name, "key": key}, kind="cache")
+            await self._emit_ic(
+                "IC.MCP_CACHE_HIT",
+                state,
+                {"tool_name": tool_name, "cache_key": key},
+                component="agent_runtime.mcp_cache",
+            )
+            if isinstance(cached, dict):
+                cached.setdefault("cached", True)
+                cached.setdefault("cache_key", key)
+            return cached
+
+        logger.info("MCP cache miss", extra={"tool_name": tool_name, "cache_key": key})
+        if telemetry:
+            await telemetry.event("cache.mcp.miss", {"tool_name": tool_name, "key": key}, kind="cache")
+        await self._emit_ic(
+            "IC.MCP_CACHE_MISS",
+            state,
+            {"tool_name": tool_name, "cache_key": key},
+            component="agent_runtime.mcp_cache",
+        )
+
+        result = await self._call_mcp_tool_uncached(tool_name, args, state)
+
+        # Cacheia apenas respostas bem-sucedidas. Erros permanecem visíveis e
+        # permitem nova tentativa na próxima interação.
+        if result.get("ok"):
+            ttl = self._mcp_cache_ttl_seconds(tool_name)
+            await self._cache_set(key, result, ttl)
+            logger.info("MCP cache set", extra={"tool_name": tool_name, "cache_key": key, "ttl_seconds": ttl})
+            if telemetry:
+                await telemetry.event("cache.mcp.set", {"tool_name": tool_name, "key": key, "ttl_seconds": ttl}, kind="cache")
+            await self._emit_ic(
+                "IC.MCP_CACHE_SET",
+                state,
+                {"tool_name": tool_name, "cache_key": key, "ttl_seconds": ttl},
+                component="agent_runtime.mcp_cache",
+            )
+        else:
+            logger.info("MCP cache not stored", extra={"tool_name": tool_name, "cache_key": key, "reason": "tool_result_not_ok"})
+            await self._emit_ic(
+                "IC.MCP_CACHE_NOT_STORED",
+                state,
+                {"tool_name": tool_name, "cache_key": key, "reason": "tool_result_not_ok"},
+                component="agent_runtime.mcp_cache",
+            )
+        return result
 
     async def execute_tools_for_intent(
         self,

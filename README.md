@@ -4452,6 +4452,9 @@ tools:
     description: Consulta um título financeiro por cliente e contrato.
     mcp_server: telecom
     enabled: true
+    cache:
+      enabled: true
+      ttl_seconds: 600
     args_schema:
       customer_id: string
       contract_id: string
@@ -4460,8 +4463,12 @@ tools:
     description: Consulta pagamentos financeiros por cliente.
     mcp_server: telecom
     enabled: true
+    cache:
+      enabled: true
+      ttl_seconds: 300
     args_schema:
       customer_id: string
+
 ```
 
 ### 11.3. Como pensar sobre uma tool
