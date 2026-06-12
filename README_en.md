@@ -4470,6 +4470,182 @@ Does the result have sensitive data that needs to be masked?
 
 The backend should not directly call HTTP/SOAP/DB from business systems when this call can be standardized via the MCP Tool Router.
 
+
+### 11.4. MCP Cache
+
+### 11.4.1. Overview
+
+The Agent Framework supports caching for MCP tool executions.
+
+The goal is to avoid repeated calls to MCP Servers when the same tool is executed multiple times with the same input parameters.
+
+Benefits:
+
+- Reduced latency
+- Reduced backend load
+- Reduced database queries
+- Reduced REST/API calls
+- Improved user experience
+- Improved scalability
+
+---
+
+### 11.4.2. How MCP Cache Works
+
+Flow without cache:
+
+```text
+Agent
+  ↓
+MCP Tool
+  ↓
+MCP Server
+  ↓
+Backend/API/Database
+  ↓
+Response
+```
+
+Flow with cache:
+
+```text
+Agent
+  ↓
+MCP Cache Lookup
+  ↓
+Cache HIT
+  ↓
+Cached Response
+```
+
+or
+
+```text
+Agent
+  ↓
+MCP Cache Lookup
+  ↓
+Cache MISS
+  ↓
+MCP Server
+  ↓
+Response
+  ↓
+Cache Store
+```
+
+---
+
+### 11.4.3. Enabling Cache
+
+Cache is configured directly in `tools.yaml`.
+
+```yaml
+tools:
+
+  consultar_fatura:
+    description: Consulta dados resumidos de fatura.
+    mcp_server: telecom
+    enabled: true
+
+    cache:
+      enabled: true
+      ttl_seconds: 600
+
+    args_schema:
+      msisdn: string
+      invoice_id: string
+```
+
+---
+
+### 11.4.4. Cache Key Generation
+
+The cache key is automatically built from:
+
+- tool_name
+- fields declared in args_schema
+- values effectively sent to MCP
+
+Fields such as session_id, request_id, trace_id and telemetry identifiers are ignored.
+
+---
+
+### 11.4.5. Expected Langfuse Events
+
+### 11.4.5.1. IC.MCP_CACHE_MISS
+
+Cache entry not found.
+
+```text
+IC.MCP_CACHE_MISS
+↓
+IC.MCP_TOOL_EXECUTING
+↓
+IC.MCP_TOOL_EXECUTED
+↓
+IC.MCP_CACHE_SET
+```
+
+### 11.4.5.2. IC.MCP_CACHE_HIT
+
+Cached response returned.
+
+```text
+IC.MCP_CACHE_HIT
+```
+
+No MCP execution should occur.
+
+### 11.4.5.3. IC.MCP_CACHE_SET
+
+A successful MCP response was stored in cache.
+
+### 11.4.5.4. IC.MCP_CACHE_BYPASS
+
+Cache intentionally skipped.
+
+### 11.4.5.5. IC.MCP_CACHE_NOT_STORED
+
+Tool executed but response was not stored.
+
+### 11.4.5.6. IC.MCP_TOOL_DEDUPED
+
+The same MCP tool request was detected more than once during the same execution cycle.
+
+---
+
+### 11.4.6. Validation
+
+First request:
+
+```text
+quero minha fatura
+```
+
+Expected:
+
+```text
+IC.MCP_CACHE_MISS
+IC.MCP_TOOL_EXECUTING
+IC.MCP_TOOL_EXECUTED
+IC.MCP_CACHE_SET
+```
+
+Second identical request:
+
+```text
+quero minha fatura
+```
+
+Expected:
+
+```text
+IC.MCP_CACHE_HIT
+```
+
+No `IC.MCP_TOOL_EXECUTED` should appear.
+
 ---
 
 ## 12. Configuring MCP servers

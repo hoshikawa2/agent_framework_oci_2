@@ -4487,6 +4487,182 @@ O resultado tem dados sensíveis que precisam ser mascarados?
 
 O backend não deve chamar diretamente HTTP/SOAP/DB de sistemas de negócio quando essa chamada puder ser padronizada via MCP Tool Router.
 
+### 11.4. Cache do MCP
+
+### 11.4.1. Visão geral
+
+O Agent Framework suporta cache para execuções de ferramentas MCP.
+
+O objetivo é evitar chamadas repetidas para os servidores MCP quando a mesma ferramenta é executada várias vezes com os mesmos parâmetros de entrada.
+
+Benefícios:
+
+- Latência reduzida
+- Carga de back-end reduzida
+- Consultas de banco de dados reduzidas
+- Chamadas REST/API reduzidas
+- Melhor experiência do usuário
+- Escalabilidade aprimorada
+
+---
+
+### 11.4.2. Como funciona o cache do MCP
+
+Fluxo sem cache:
+
+```text
+Agent
+  ↓
+MCP Tool
+  ↓
+MCP Server
+  ↓
+Backend/API/Database
+  ↓
+Response
+```
+
+Fluxo com cache:
+
+```text
+Agent
+  ↓
+MCP Cache Lookup
+  ↓
+Cache HIT
+  ↓
+Cached Response
+```
+
+ou
+
+```text
+Agent
+  ↓
+MCP Cache Lookup
+  ↓
+Cache MISS
+  ↓
+MCP Server
+  ↓
+Response
+  ↓
+Cache Store
+```
+
+---
+
+### 11.4.3. Ativação do cache
+
+O cache é configurado diretamente em `tools.yaml`.
+
+```yaml
+tools:
+
+  consultar_fatura:
+    description: Consulta dados resumidos de fatura.
+    mcp_server: telecom
+    enabled: true
+
+    cache:
+      enabled: true
+      ttl_seconds: 600
+
+    args_schema:
+      msisdn: string
+      invoice_id: string
+```
+
+---
+
+### 11.4.4. Geração de chave de cache
+
+A chave de cache é criada automaticamente a partir de:
+
+- tool_name
+- campos declarados em args_schema
+- valores efetivamente enviados para o MCP
+
+Campos como session_id, request_id, trace_id e identificadores de telemetria são ignorados.
+
+---
+
+### 11.4.5. Eventos esperados do Langfuse
+
+### 11.4.5.1. IC.MCP_CACHE_MISS
+
+Entrada de cache não encontrada.
+
+```text
+IC.MCP_CACHE_MISS
+↓
+IC.MCP_TOOL_EXECUTING
+↓
+IC.MCP_TOOL_EXECUTED
+↓
+IC.MCP_CACHE_SET
+```
+
+### 11.4.5.2. IC.MCP_CACHE_HIT
+
+Resposta em cache retornada.
+
+```text
+IC.MCP_CACHE_HIT
+```
+
+Nenhuma execução de MCP deve ocorrer.
+
+### 11.4.5.3. IC.MCP_CACHE_SET
+
+Uma resposta MCP bem-sucedida foi armazenada no cache.
+
+### 11.4.5.4. IC.MCP_CACHE_BYPASS
+
+Cache ignorada intencionalmente.
+
+### 11.4.5.5. IC.MCP_CACHE_NOT_STORED
+
+Ferramenta executada, mas a resposta não foi armazenada.
+
+### 11.4.5.6. IC.MCP_TOOL_DEDUPED
+
+A mesma solicitação de ferramenta MCP foi detectada mais de uma vez durante o mesmo ciclo de execução.
+
+---
+
+### 11.4.6. Validação
+
+Primeira solicitação:
+
+```text
+quero minha fatura
+```
+
+Esperado:
+
+```text
+IC.MCP_CACHE_MISS
+IC.MCP_TOOL_EXECUTING
+IC.MCP_TOOL_EXECUTED
+IC.MCP_CACHE_SET
+```
+
+Segunda solicitação idêntica:
+
+```text
+quero minha fatura
+```
+
+Esperado:
+
+```text
+IC.MCP_CACHE_HIT
+```
+
+Nenhum `IC.MCP_TOOL_EXECUTED` deve aparecer.
+
+
 ---
 
 ## 12. Configurando servidores MCP
