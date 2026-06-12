@@ -400,11 +400,12 @@ class AgentRuntimeMixin:
 
         A chave de cache é baseada em:
         - tool_name
-        - todos os argumentos efetivamente enviados ao MCP.
+        - campos declarados em args_schema da tool em config/tools.yaml.
 
         Não entram na chave: session_id, request_id, trace_id, timestamp, intent,
-        agent_id ou business_context completo, pois esses valores tendem a mudar
-        entre chamadas e impediriam cache HIT.
+        agent_id, business_context completo ou atributos auxiliares fora do
+        args_schema, pois esses valores tendem a mudar entre chamadas e
+        impediriam cache HIT.
         """
         settings = getattr(self, "settings", None)
         default_ttl = int(
@@ -469,24 +470,50 @@ class AgentRuntimeMixin:
             return [self._normalize_mcp_cache_value(v) for v in value if v not in _EMPTY_VALUES]
         return value
 
+    def _mcp_cache_args_schema_fields(self, tool_name: str) -> list[str]:
+        """Retorna os campos declarados no args_schema da tool.
+
+        Fonte da verdade: config/tools.yaml.
+        Somente esses campos entram na cache_key, porque eles representam o
+        contrato público/funcional da chamada MCP. Campos auxiliares que possam
+        aparecer no payload em tempo de execução não devem quebrar o cache.
+        """
+        cfg = self._tool_config(tool_name)
+        schema = getattr(cfg, "args_schema", None) if cfg is not None else None
+        if isinstance(schema, dict):
+            return [str(k) for k in schema.keys()]
+        return []
+
     def _mcp_cache_key_payload(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Monta o payload determinístico usado na chave de cache MCP.
 
         Regra principal:
-        mesma tool + mesmos atributos relevantes enviados ao MCP = mesma chave.
+        mesma tool + mesmos campos de args_schema + mesmos valores = mesma chave.
 
-        A chave usa todos os argumentos recebidos pela tool, exceto valores vazios.
-        Como esses argumentos já passaram pelo mcp_parameter_mapping.yaml, args_schema
-        e Tool Router, eles representam o contrato efetivo da chamada MCP.
+        A chave NÃO usa session_id, request_id, trace_id, timestamp, intent,
+        business_context completo ou qualquer atributo auxiliar fora do
+        args_schema da tool. Isso evita MISS permanente por dados voláteis.
         """
-        key_arguments = {
-            str(k): v
-            for k, v in (arguments or {}).items()
-            if v not in _EMPTY_VALUES
-        }
+        args = arguments or {}
+        schema_fields = self._mcp_cache_args_schema_fields(tool_name)
+
+        if schema_fields:
+            key_arguments = {
+                field: args.get(field)
+                for field in schema_fields
+                if args.get(field) not in _EMPTY_VALUES
+            }
+        else:
+            # Fallback defensivo para tools antigas sem args_schema.
+            key_arguments = {
+                str(k): v
+                for k, v in args.items()
+                if v not in _EMPTY_VALUES
+            }
 
         return {
             "tool_name": tool_name,
+            "args_schema_fields": schema_fields,
             "arguments": self._normalize_mcp_cache_value(key_arguments),
         }
 
@@ -495,23 +522,99 @@ class AgentRuntimeMixin:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         return "mcp:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    async def _call_mcp_tool_uncached(self, tool_name: str, arguments: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_mcp_call(self, tool_name: str, arguments: dict[str, Any], state: dict[str, Any]):
+        """Resolve servidor e argumentos efetivos antes de executar o MCP.
+
+        Importante para cache:
+        - build_tool_arguments() ainda contém campos canônicos/auxiliares;
+        - MCPToolRouter aplica mcp_parameter_mapping.yaml;
+        - a cache_key deve usar os argumentos finais enviados ao MCP, filtrados
+          pelo args_schema da tool.
+        """
+        router = getattr(self, "tool_router", None)
+        if not router:
+            return None, {}, {"ok": False, "tool_name": tool_name, "error": "MCP Tool Router indisponível"}
+
+        runtime = self.get_runtime_context(state)
+        if hasattr(router, "prepare_call"):
+            server, mapped_arguments, error = router.prepare_call(
+                tool_name,
+                arguments,
+                business_context=runtime.business_context,
+                original_context=runtime.as_original_context(),
+            )
+            if error is not None:
+                result = error.model_dump(mode="json") if hasattr(error, "model_dump") else dict(error)
+                return None, {}, result
+            return server, mapped_arguments, None
+
+        # Compatibilidade com versões antigas do router.
+        return None, arguments or {}, None
+
+    async def _call_mcp_tool_uncached(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        state: dict[str, Any],
+        *,
+        prepared_server: Any | None = None,
+        mapped_arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         router = getattr(self, "tool_router", None)
         if not router:
             return {"ok": False, "tool_name": tool_name, "error": "MCP Tool Router indisponível"}
-        runtime = self.get_runtime_context(state)
-        res = await router.call(
-            tool_name,
-            arguments,
-            business_context=runtime.business_context,
-            original_context=runtime.as_original_context(),
+
+        effective_arguments = mapped_arguments if mapped_arguments is not None else arguments
+        await self._emit_ic(
+            "IC.MCP_TOOL_EXECUTING",
+            state,
+            {"tool_name": tool_name, "arguments": self._normalize_mcp_cache_value(effective_arguments or {})},
+            component="agent_runtime.mcp",
         )
-        return res.model_dump(mode="json") if hasattr(res, "model_dump") else dict(res)
+
+        if prepared_server is not None and mapped_arguments is not None and hasattr(router, "call_prepared"):
+            res = await router.call_prepared(tool_name, prepared_server, mapped_arguments)
+        else:
+            runtime = self.get_runtime_context(state)
+            res = await router.call(
+                tool_name,
+                arguments,
+                business_context=runtime.business_context,
+                original_context=runtime.as_original_context(),
+            )
+        result = res.model_dump(mode="json") if hasattr(res, "model_dump") else dict(res)
+        if isinstance(result, dict):
+            result.setdefault("cached", False)
+        await self._emit_ic(
+            "IC.MCP_TOOL_EXECUTED",
+            state,
+            {
+                "tool_name": tool_name,
+                "ok": result.get("ok") if isinstance(result, dict) else None,
+                "server_name": result.get("server_name") if isinstance(result, dict) else None,
+                "error": result.get("error") if isinstance(result, dict) else None,
+            },
+            component="agent_runtime.mcp",
+        )
+        return result
 
     async def _call_mcp_tool(self, tool_name: str, arguments: dict[str, Any] | None, state: dict[str, Any]) -> dict[str, Any]:
         args = arguments or {}
-        cacheable = self._is_mcp_tool_cacheable(tool_name, args) and getattr(self, "cache", None) is not None
         telemetry = getattr(self, "telemetry", None)
+
+        prepared_server, effective_args, prepare_error = self._prepare_mcp_call(tool_name, args, state)
+        if prepare_error is not None:
+            await self._emit_ic(
+                "IC.MCP_TOOL_PREPARE_FAILED",
+                state,
+                {"tool_name": tool_name, "error": prepare_error.get("error")},
+                component="agent_runtime.mcp",
+            )
+            return prepare_error
+
+        # A política de cache continua vindo do tools.yaml. A chave, porém, usa
+        # os argumentos EFETIVOS do MCP, ou seja, depois do mcp_parameter_mapping.
+        cacheable = self._is_mcp_tool_cacheable(tool_name, effective_args) and getattr(self, "cache", None) is not None
 
         if not cacheable:
             logger.info("MCP cache bypass", extra={"tool_name": tool_name, "reason": "disabled_or_not_configured"})
@@ -521,10 +624,36 @@ class AgentRuntimeMixin:
                 {"tool_name": tool_name, "reason": "disabled_or_not_configured"},
                 component="agent_runtime.mcp_cache",
             )
-            return await self._call_mcp_tool_uncached(tool_name, args, state)
+            return await self._call_mcp_tool_uncached(
+                tool_name,
+                args,
+                state,
+                prepared_server=prepared_server,
+                mapped_arguments=effective_args,
+            )
 
-        key = self._mcp_cache_key(tool_name, args, state)
-        key_payload = self._mcp_cache_key_payload(tool_name, args)
+        key = self._mcp_cache_key(tool_name, effective_args, state)
+        key_payload = self._mcp_cache_key_payload(tool_name, effective_args)
+
+        # Deduplicação intra-turno: se o mesmo fluxo tentar chamar a mesma tool
+        # duas vezes com os mesmos argumentos no mesmo state, reaproveita o
+        # primeiro resultado e impede segunda chamada HTTP ao MCP Server.
+        turn_cache = state.setdefault("_mcp_tool_results_by_cache_key", {})
+        if key in turn_cache:
+            deduped = dict(turn_cache[key]) if isinstance(turn_cache[key], dict) else turn_cache[key]
+            if isinstance(deduped, dict):
+                deduped.setdefault("cached", True)
+                deduped["deduped"] = True
+                deduped.setdefault("cache_key", key)
+            logger.info("MCP tool deduped in turn", extra={"tool_name": tool_name, "cache_key": key})
+            await self._emit_ic(
+                "IC.MCP_TOOL_DEDUPED",
+                state,
+                {"tool_name": tool_name, "cache_key": key, "cache_key_payload": key_payload},
+                component="agent_runtime.mcp_cache",
+            )
+            return deduped
+
         cached = await self._cache_get(key)
         if cached is not None:
             logger.info("MCP cache hit", extra={"tool_name": tool_name, "cache_key": key, "cache_key_payload": key_payload})
@@ -539,6 +668,7 @@ class AgentRuntimeMixin:
             if isinstance(cached, dict):
                 cached.setdefault("cached", True)
                 cached.setdefault("cache_key", key)
+            turn_cache[key] = cached
             return cached
 
         logger.info("MCP cache miss", extra={"tool_name": tool_name, "cache_key": key, "cache_key_payload": key_payload})
@@ -551,7 +681,16 @@ class AgentRuntimeMixin:
             component="agent_runtime.mcp_cache",
         )
 
-        result = await self._call_mcp_tool_uncached(tool_name, args, state)
+        result = await self._call_mcp_tool_uncached(
+            tool_name,
+            args,
+            state,
+            prepared_server=prepared_server,
+            mapped_arguments=effective_args,
+        )
+        if isinstance(result, dict):
+            result.setdefault("cache_key", key)
+        turn_cache[key] = result
 
         # Cacheia apenas respostas bem-sucedidas. Erros permanecem visíveis e
         # permitem nova tentativa na próxima interação.
@@ -597,11 +736,22 @@ class AgentRuntimeMixin:
                     await self._emit_ic("IC.TOOL_SKIPPED_BY_POLICY", state, {"tool_name": tool, "reason": reason}, component="agent_runtime.tool_policy")
                 continue
             if emit_events:
-                await self._emit_ic("IC.MCP_TOOL_CALLED", state, {"tool_name": tool}, component="agent_runtime")
+                await self._emit_ic("IC.MCP_TOOL_REQUESTED", state, {"tool_name": tool}, component="agent_runtime")
             result = await self._call_mcp_tool(tool, args, state)
             results.append(result)
             if emit_events:
-                await self._emit_ic("IC.TOOL_CALLED", state, {"tool_name": tool, "ok": result.get("ok"), "server_name": result.get("server_name"), "error": result.get("error")}, component="agent_runtime")
+                await self._emit_ic(
+                    "IC.TOOL_CALLED",
+                    state,
+                    {
+                        "tool_name": tool,
+                        "ok": result.get("ok"),
+                        "server_name": result.get("server_name"),
+                        "error": result.get("error"),
+                        "cached": bool(result.get("cached")),
+                    },
+                    component="agent_runtime",
+                )
                 if not result.get("ok"):
                     await self._emit_noc("NOC.MCP_TOOL_FAILED", state, {"tool_name": tool, "error": result.get("error")}, component="agent_runtime")
         return results
