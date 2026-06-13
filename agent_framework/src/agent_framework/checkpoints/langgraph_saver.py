@@ -115,7 +115,17 @@ class RepositoryCheckpointSaver(BaseCheckpointSaver):
 
     async def aput_writes(self, config: dict[str, Any], writes: list[tuple[str, Any]], task_id: str, task_path: str = ""):
         thread_id = _thread_id(config)
-        latest = await self.repository.get_latest(thread_id) or {"thread_id": thread_id, "config": config, "checkpoint": {}, "metadata": {}}
+        try:
+            latest = await self.repository.get_latest(thread_id) or {"thread_id": thread_id, "config": config, "checkpoint": {}, "metadata": {}}
+        except:
+            latest = {
+                "thread_id": thread_id,
+                "config": config,
+                "checkpoint": {},
+                "metadata": {},
+                "pending_writes": [],
+            }
+
         pending = list(latest.get("pending_writes") or [])
         for channel, value in writes or []:
             pending.append({"task_id": task_id, "task_path": task_path, "channel": channel, "value": _jsonable(value)})
