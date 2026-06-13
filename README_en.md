@@ -9484,7 +9484,9 @@ It always uses RagService.
 
 Agents typically use:
 
-python rag_context, rag_metadata = await self._retrieve_rag_context(state)
+```python 
+rag_context, rag_metadata = await self._retrieve_rag_context(state)
+```
 
 Internal flow:
 
@@ -9508,7 +9510,9 @@ Where:
 
 Example:
 
-python rag_context, rag_metadata = await self._retrieve_rag_context(state)  messages = [{         "role": "system",         "content": system_prompt,     },     {         "role": "user",         "content": f""" Question: {user_text}  RAG Context: {rag_context} """     }]
+```python 
+rag_context, rag_metadata = await self._retrieve_rag_context(state)  messages = [{         "role": "system",         "content": system_prompt,     },     {         "role": "user",         "content": f""" Question: {user_text}  RAG Context: {rag_context} """     }]
+```
 
 The LLM starts to respond using documentary evidence.
 
