@@ -14,7 +14,6 @@ from agent_framework.channels.gateway import ChannelGateway
 from agent_framework.config.agent_registry import AgentProfileRegistry
 from agent_framework.config.settings import settings
 from agent_framework.analytics.factory import create_analytics_publisher
-from agent_framework.observability.observer import AgentObserver
 from agent_framework.observer import configure as configure_global_observer
 from agent_framework.llm.providers import create_llm
 from agent_framework.memory.message_history import create_memory
@@ -31,6 +30,7 @@ from agent_framework.cache.cache import create_cache
 from agent_framework.billing.usage_repository import create_usage_repository
 from agent_framework.sse.events import SSEHub
 from app.workflows.agent_graph import AgentWorkflow
+from app.observability.telemetry_observer import TelemetryBackedAgentObserver
 
 logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger("agent_template_backend")
@@ -54,7 +54,7 @@ checkpoints = create_checkpoint_repository(settings)
 cache = create_cache(settings, telemetry=telemetry)
 gateway = ChannelGateway(input_mode=settings.FRAMEWORK_CHANNEL_INPUT_MODE)
 analytics = create_analytics_publisher(settings)
-observer = AgentObserver(analytics=analytics)
+observer = TelemetryBackedAgentObserver(telemetry=telemetry)
 configure_global_observer({
     "enabled": getattr(settings, "ENABLE_ANALYTICS", False),
     "providers": getattr(settings, "ANALYTICS_PROVIDERS", "oci_streaming"),

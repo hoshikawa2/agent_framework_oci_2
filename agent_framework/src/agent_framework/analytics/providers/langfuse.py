@@ -8,6 +8,12 @@ from typing import Any
 
 from agent_framework.analytics.publisher import AnalyticsPublisher
 
+try:  # Avoid making analytics import fragile in old deployments.
+    from agent_framework.observability.context import get_current_observation_id, get_observability_context
+except Exception:  # pragma: no cover
+    get_observability_context = None  # type: ignore
+    get_current_observation_id = None  # type: ignore
+
 logger = logging.getLogger("agent_framework.analytics.langfuse")
 
 
@@ -36,9 +42,101 @@ def _safe_metadata(value: Any) -> Any:
 
 
 _LANGFUSE_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_INTERNAL_PREFIXES = ("IC.", "AGA.", "NOC.", "GRL.")
+_TECHNICAL_PREFIXES = (
+    "langgraph.",
+    "mcp.",
+    "guardrail.",
+    "judge.",
+    "workflow.",
+    "rag.",
+    "cache.",
+    "checkpoint.",
+)
+
+
+def _clean_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _first(*values: Any) -> str | None:
+    for value in values:
+        text = _clean_str(value)
+        if text:
+            return text
+    return None
+
+
+def _current_context() -> dict[str, Any]:
+    if get_observability_context is None:
+        return {}
+    try:
+        return get_observability_context().clean()
+    except Exception:
+        return {}
+
+
+def _current_parent_observation_id() -> str | None:
+    if get_current_observation_id is None:
+        return None
+    try:
+        value = get_current_observation_id()
+        return str(value) if value else None
+    except Exception:
+        return None
+
+
+def _is_internal_name(name: Any) -> bool:
+    text = _clean_str(name) or ""
+    return text.startswith(_INTERNAL_PREFIXES)
+
+
+def _is_technical_name(name: Any) -> bool:
+    text = _clean_str(name) or ""
+    return text.startswith(_TECHNICAL_PREFIXES)
+
+
+def _is_control_or_technical(name: Any) -> bool:
+    return _is_internal_name(name) or _is_technical_name(name)
+
+
+def _extract_envelope_event_type(envelope: dict[str, Any]) -> str | None:
+    return _first(
+        envelope.get("eventType"),
+        envelope.get("event_type"),
+        envelope.get("name"),
+        envelope.get("type"),
+    )
+
+
+def _is_wrapped_internal_event(event_type: str, envelope: dict[str, Any]) -> bool:
+    """Detecta caso que gerava trace raiz errado.
+
+    Exemplo observado no Langfuse:
+      name=http.request.completed
+      input={"eventType": "NOC.006", ...}
+      output={"published": true}
+
+    Isso não é o trace real da request; é apenas o publisher de analytics
+    emitindo um envelope IC/NOC/GRL através de um evento técnico. Esse registro
+    deve ser suprimido para não poluir a tela Tracing -> Traces.
+    """
+    envelope_event_type = _extract_envelope_event_type(envelope)
+    return bool(
+        envelope_event_type
+        and _is_internal_name(envelope_event_type)
+        and str(event_type) != envelope_event_type
+        and str(event_type).startswith(("http.request.", "gateway.", "telemetry."))
+    )
 
 
 def _raw_correlation_id(metadata: dict[str, Any]) -> str | None:
+    # IMPORTANT: prefer request/trace ids over transaction/session ids. Using
+    # transaction/session as first choice created duplicate root traces for
+    # IC/NOC/GRL events while the HTTP trace used request_id.
     value = (
         metadata.get("traceId")
         or metadata.get("trace_id")
@@ -53,7 +151,11 @@ def _raw_correlation_id(metadata: dict[str, Any]) -> str | None:
 
 
 def _langfuse_trace_id(value: Any) -> str | None:
-    """Normalize framework/business ids to Langfuse's 32 lowercase hex id."""
+    """Normaliza ids do framework/business para o formato aceito pelo Langfuse.
+
+    Langfuse SDK v3 exige 32 caracteres hex minúsculos. UUIDs com hífens são
+    compactados; ids de negócio/sessão viram hash md5 determinístico.
+    """
     if value is None:
         return None
     raw = str(value).strip().lower()
@@ -66,34 +168,49 @@ def _langfuse_trace_id(value: Any) -> str | None:
 
 
 def _correlation_trace_id(metadata: dict[str, Any]) -> str | None:
-    """Stable Langfuse-safe trace id used to group IC/NOC/GRL events."""
     return _langfuse_trace_id(_raw_correlation_id(metadata))
 
 
 def _with_trace_context(kwargs: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
     raw_id = _raw_correlation_id(metadata)
     trace_id = _langfuse_trace_id(raw_id)
-    if trace_id and "trace_context" not in kwargs:
-        kwargs["trace_context"] = {"trace_id": trace_id}
+    parent_id = (
+        metadata.get("parent_observation_id")
+        or metadata.get("parent_span_id")
+        or kwargs.get("parent_observation_id")
+        or kwargs.get("parent_span_id")
+        or _current_parent_observation_id()
+    )
+    if trace_id:
+        trace_context = dict(kwargs.get("trace_context") or {})
+        trace_context.setdefault("trace_id", trace_id)
+        if parent_id:
+            trace_context.setdefault("parent_span_id", str(parent_id))
+        kwargs["trace_context"] = trace_context
         meta = kwargs.setdefault("metadata", {})
         if isinstance(meta, dict):
             meta.setdefault("framework_trace_id", raw_id)
             meta.setdefault("langfuse_trace_id", trace_id)
+            if parent_id:
+                meta.setdefault("parent_observation_id", str(parent_id))
     return kwargs
 
 
+def _allow_standalone_internal_events() -> bool:
+    # Default false: IC/NOC/GRL sem contexto de request não devem criar linhas
+    # soltas na tela principal de Traces. Habilite só para debug isolado.
+    return _truthy(os.getenv("LANGFUSE_ALLOW_STANDALONE_INTERNAL_EVENTS"), False)
+
+
 class LangfuseAnalyticsPublisher(AnalyticsPublisher):
-    """Publica eventos IC/NOC/GRL do observer como observations/spans no Langfuse.
+    """Publica eventos IC/NOC/GRL no Langfuse sem criar traces raiz duplicados.
 
-    Esta classe é a versão nativa, dentro do framework, do comportamento que
-    projetos legados faziam com `ics_collector.py`: qualquer chamada para
-    `agent_framework.observer.event("AGA.001"|"NOC.001"|"GRL.001", ...)`
-    passa a aparecer no Langfuse como uma observation/span com o próprio código
-    como nome.
-
-    O publisher é tolerante a versões diferentes do SDK Langfuse:
-    - SDK v3: usa `start_as_current_observation(as_type="span", ...)`;
-    - SDK antigo: tenta `event(...)` ou `span(...)` como fallback.
+    Regra principal:
+      - 1 request/workflow = 1 trace raiz;
+      - IC/NOC/GRL e eventos técnicos entram como observations/spans dentro do
+        trace corrente;
+      - envelopes internos embrulhados em eventos HTTP/gateway não criam trace
+        próprio com output {"published": true}.
     """
 
     def __init__(self, settings: Any | None = None, langfuse: Any | None = None):
@@ -133,41 +250,92 @@ class LangfuseAnalyticsPublisher(AnalyticsPublisher):
 
         event_type = str(event_type)
         envelope = dict(payload or {})
+
+        # Prevent the exact pollution seen in Langfuse: http.request.completed
+        # traces whose input is a NOC/IC envelope and output is {published:true}.
+        if _is_wrapped_internal_event(event_type, envelope):
+            logger.debug(
+                "langfuse.analytics.skip_wrapped_internal event_type=%s envelope_event_type=%s",
+                event_type,
+                _extract_envelope_event_type(envelope),
+            )
+            return
+
         body = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
         metadata = envelope.get("metadata") if isinstance(envelope.get("metadata"), dict) else {}
+        ctx = _current_context()
+
         source = envelope.get("source") or "agent_framework"
         event_date = envelope.get("eventDate")
+        envelope_event_type = _extract_envelope_event_type(envelope)
+        effective_event_type = envelope_event_type if _is_internal_name(envelope_event_type) else event_type
 
-        # Metadata fica rica, mas o input mantém o envelope para auditoria.
+        # Correlation priority: current ObservabilityContext > payload metadata >
+        # transaction/session fallback. This keeps IC/NOC/GRL in the same HTTP trace.
+        correlation_request_id = _first(
+            ctx.get("request_id"),
+            ctx.get("trace_id"),
+            body.get("request_id"), metadata.get("request_id"),
+            body.get("requestId"), metadata.get("requestId"),
+            envelope.get("request_id"), envelope.get("requestId"),
+        )
+        correlation_trace_id = _first(
+            ctx.get("trace_id"),
+            ctx.get("request_id"),
+            body.get("trace_id"), metadata.get("trace_id"),
+            body.get("traceId"), metadata.get("traceId"),
+            correlation_request_id,
+        )
+        correlation_session_id = _first(
+            ctx.get("session_id"),
+            body.get("session_id"), metadata.get("session_id"),
+            body.get("sessionId"), metadata.get("sessionId"),
+            body.get("transaction_id"), metadata.get("transaction_id"),
+            body.get("transactionId"), metadata.get("transactionId"),
+        )
+
+        is_internal = _is_internal_name(effective_event_type)
+        is_technical = _is_technical_name(effective_event_type)
+
+        # IC/NOC/GRL without current/request correlation are usually emitted by
+        # background/legacy publishers. Do not create standalone trace rows unless
+        # explicitly requested for debugging.
+        if (is_internal or is_technical) and not correlation_trace_id and not _allow_standalone_internal_events():
+            logger.debug("langfuse.analytics.skip_unrelated_internal event_type=%s", effective_event_type)
+            return
+
         langfuse_metadata = _safe_metadata({
-            "eventType": event_type,
+            "eventType": effective_event_type,
+            "original_event_type": event_type if event_type != effective_event_type else None,
             "source": source,
             "eventDate": event_date,
             "payload": body,
             "metadata": metadata,
-            "ic": _is_ic(event_type, metadata),
-            "noc": _is_noc(event_type, metadata),
-            "grl": _is_grl(event_type, metadata),
-            "tag": body.get("tag") or metadata.get("tag") or event_type,
-            "request_id": body.get("request_id") or metadata.get("request_id") or body.get("requestId") or metadata.get("requestId"),
-            "trace_id": body.get("trace_id") or metadata.get("trace_id") or body.get("traceId") or metadata.get("traceId"),
+            "ic": _is_ic(str(effective_event_type), metadata),
+            "noc": _is_noc(str(effective_event_type), metadata),
+            "grl": _is_grl(str(effective_event_type), metadata),
+            "tag": body.get("tag") or metadata.get("tag") or effective_event_type,
+            "request_id": correlation_request_id,
+            "trace_id": correlation_trace_id,
             "transaction_id": body.get("transaction_id") or metadata.get("transaction_id") or body.get("transactionId") or metadata.get("transactionId"),
-            "sessionId": body.get("sessionId") or metadata.get("sessionId") or body.get("session_id") or metadata.get("session_id"),
-            "messageId": body.get("messageId") or metadata.get("messageId") or body.get("message_id") or metadata.get("message_id"),
-            "agentId": body.get("agentId") or metadata.get("agentId") or body.get("agent_id") or metadata.get("agent_id"),
-            "channelId": body.get("channelId") or metadata.get("channelId") or body.get("channel") or metadata.get("channel"),
+            "sessionId": correlation_session_id,
+            "session_id": correlation_session_id,
+            "messageId": body.get("messageId") or metadata.get("messageId") or body.get("message_id") or metadata.get("message_id") or ctx.get("message_id"),
+            "agentId": body.get("agentId") or metadata.get("agentId") or body.get("agent_id") or metadata.get("agent_id") or ctx.get("agent_id"),
+            "channelId": body.get("channelId") or metadata.get("channelId") or body.get("channel") or metadata.get("channel") or ctx.get("channel"),
+            "workflow_id": body.get("workflow_id") or metadata.get("workflow_id") or ctx.get("workflow_id"),
+            "tenant_id": body.get("tenant_id") or metadata.get("tenant_id") or ctx.get("tenant_id"),
+            "parent_observation_id": body.get("parent_observation_id") or metadata.get("parent_observation_id") or _current_parent_observation_id(),
         })
 
-        # Atualiza trace corrente quando houver dados suficientes, mas não falha
-        # se o SDK/contexto não suportar essa operação.
         self._update_current_trace(langfuse_metadata)
 
-        # Preferência: observation/span nomeada pelo próprio código. Isso replica
-        # a experiência visual do backoffice original no Langfuse.
+        # Prefer current/correlated observation API. For internal/technical events,
+        # do not fall back to standalone span/trace APIs if this fails.
         try:
             if hasattr(self.langfuse, "start_as_current_observation"):
                 kwargs = _with_trace_context({
-                    "name": event_type,
+                    "name": str(effective_event_type),
                     "as_type": "span",
                     "input": envelope,
                     "metadata": langfuse_metadata,
@@ -181,11 +349,14 @@ class LangfuseAnalyticsPublisher(AnalyticsPublisher):
                     _update_observation(observation, output={"published": True})
                 return
         except Exception:
-            logger.debug("Falha ao publicar Langfuse observation para %s", event_type, exc_info=True)
+            logger.debug("Falha ao publicar Langfuse observation para %s", effective_event_type, exc_info=True)
+            if is_internal or is_technical:
+                return
 
-        # Avoid raw langfuse.event(...) because older SDKs create a new trace row
-        # for every analytics event. Prefer attaching spans to the deterministic
-        # request trace when legacy trace/span APIs are available.
+        if is_internal or is_technical:
+            return
+
+        # Legacy fallbacks only for non-internal, high-level events.
         try:
             trace_id = _correlation_trace_id(langfuse_metadata)
             if trace_id and hasattr(self.langfuse, "trace"):
@@ -197,21 +368,21 @@ class LangfuseAnalyticsPublisher(AnalyticsPublisher):
                     metadata={k: v for k, v in langfuse_metadata.items() if v is not None},
                 )
                 if hasattr(trace, "span"):
-                    span = trace.span(name=event_type, input=envelope, metadata=langfuse_metadata)
+                    span = trace.span(name=str(effective_event_type), input=envelope, metadata=langfuse_metadata)
                     if hasattr(span, "end"):
                         span.end(output={"published": True})
                     return
         except Exception:
-            logger.debug("Falha ao publicar Langfuse span correlacionado para %s", event_type, exc_info=True)
+            logger.debug("Falha ao publicar Langfuse span correlacionado para %s", effective_event_type, exc_info=True)
 
         try:
             if hasattr(self.langfuse, "span"):
-                span = self.langfuse.span(name=event_type, input=envelope, metadata=langfuse_metadata)
+                span = self.langfuse.span(name=str(effective_event_type), input=envelope, metadata=langfuse_metadata)
                 if hasattr(span, "end"):
                     span.end(output={"published": True})
                 return
         except Exception:
-            logger.debug("Falha ao publicar Langfuse span legado para %s", event_type, exc_info=True)
+            logger.debug("Falha ao publicar Langfuse span legado para %s", effective_event_type, exc_info=True)
 
     def _update_current_trace(self, metadata: dict[str, Any]) -> None:
         try:
@@ -224,7 +395,7 @@ class LangfuseAnalyticsPublisher(AnalyticsPublisher):
                     (str(metadata.get("tag")), metadata.get("tag")),
                 ) if enabled],
             }
-            session_id = metadata.get("sessionId")
+            session_id = metadata.get("sessionId") or metadata.get("session_id")
             if session_id:
                 kwargs["session_id"] = str(session_id)
             if hasattr(self.langfuse, "update_current_trace"):

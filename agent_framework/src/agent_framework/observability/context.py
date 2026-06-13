@@ -20,6 +20,7 @@ _ura_call_id: ContextVar[str | None] = ContextVar("ura_call_id", default=None)
 _workflow_id: ContextVar[str | None] = ContextVar("workflow_id", default=None)
 _message_id: ContextVar[str | None] = ContextVar("message_id", default=None)
 _trace_id: ContextVar[str | None] = ContextVar("trace_id", default=None)
+_current_observation_id: ContextVar[str | None] = ContextVar("current_observation_id", default=None)
 
 @dataclass(slots=True)
 class ObservabilityContext:
@@ -47,6 +48,24 @@ def get_observability_context() -> ObservabilityContext:
     )
 
 
+def get_current_observation_id() -> str | None:
+    """Return the current Langfuse observation/span id for parent-child linking."""
+    return _current_observation_id.get()
+
+
+def set_current_observation_id(observation_id: str | None):
+    """Set current Langfuse observation/span id and return ContextVar token."""
+    return _current_observation_id.set(str(observation_id) if observation_id else None)
+
+
+def reset_current_observation_id(token) -> None:
+    """Restore previous Langfuse observation/span id."""
+    try:
+        _current_observation_id.reset(token)
+    except Exception:
+        _current_observation_id.set(None)
+
+
 def set_observability_context(**kwargs: Any) -> ObservabilityContext:
     if not kwargs.get("request_id") and not _request_id.get():
         kwargs["request_id"] = str(uuid4())
@@ -63,7 +82,7 @@ def set_observability_context(**kwargs: Any) -> ObservabilityContext:
 
 
 def clear_observability_context() -> None:
-    for var in (_request_id, _session_id, _user_id, _tenant_id, _agent_id, _channel, _ura_call_id, _workflow_id, _message_id, _trace_id):
+    for var in (_request_id, _session_id, _user_id, _tenant_id, _agent_id, _channel, _ura_call_id, _workflow_id, _message_id, _trace_id, _current_observation_id):
         var.set(None)
 
 

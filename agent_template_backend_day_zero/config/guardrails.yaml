@@ -6,5 +6,3 @@ input:
 output:
   - code: REVPREC
     enabled: true
-  - code: PINJ
-    enabled: true

@@ -8,3 +8,5 @@ output:
     enabled: true
   - code: PINJ
     enabled: true
+  - code: DLEX_OUT
+    enabled: true
