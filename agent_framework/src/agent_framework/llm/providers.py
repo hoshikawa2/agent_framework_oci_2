@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from .base import LLMProvider
@@ -89,14 +90,23 @@ class OCICompatibleOpenAIProvider(LLMProvider):
         )
 
     def _resolve_async_openai(self, settings):
-        if getattr(settings, "ENABLE_LANGFUSE", False):
+        # The framework records LLM calls through Telemetry.generation(...), where
+        # we can inject the request trace_context. The langfuse.openai wrapper is
+        # useful in simple apps, but in this framework it may create one top-level
+        # Langfuse trace per OpenAI call when no parent observation is active in
+        # the SDK context. Keep it opt-in to avoid noisy trace lists.
+        use_langfuse_wrapper = str(
+            getattr(settings, "ENABLE_LANGFUSE_OPENAI_AUTO_INSTRUMENTATION", None)
+            or os.getenv("ENABLE_LANGFUSE_OPENAI_AUTO_INSTRUMENTATION", "false")
+        ).strip().lower() in {"1", "true", "yes", "on", "y"}
+        if getattr(settings, "ENABLE_LANGFUSE", False) and use_langfuse_wrapper:
             try:
                 from langfuse.openai import AsyncOpenAI
                 return AsyncOpenAI
             except Exception:
                 logger.exception(
-                    "Langfuse habilitado, mas langfuse.openai.AsyncOpenAI não pôde ser importado. "
-                    "Usando openai.AsyncOpenAI sem auto-instrumentação."
+                    "Langfuse OpenAI auto-instrumentation habilitada, mas langfuse.openai.AsyncOpenAI "
+                    "não pôde ser importado. Usando openai.AsyncOpenAI sem auto-instrumentação."
                 )
         from openai import AsyncOpenAI
         return AsyncOpenAI

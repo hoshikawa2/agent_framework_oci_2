@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import re
 from typing import Any
 
 from agent_framework.analytics.publisher import AnalyticsPublisher
@@ -31,6 +33,53 @@ def _safe_metadata(value: Any) -> Any:
     if isinstance(value, list):
         return [_safe_metadata(item) for item in value]
     return value
+
+
+_LANGFUSE_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _raw_correlation_id(metadata: dict[str, Any]) -> str | None:
+    value = (
+        metadata.get("traceId")
+        or metadata.get("trace_id")
+        or metadata.get("requestId")
+        or metadata.get("request_id")
+        or metadata.get("transactionId")
+        or metadata.get("transaction_id")
+        or metadata.get("sessionId")
+        or metadata.get("session_id")
+    )
+    return str(value) if value else None
+
+
+def _langfuse_trace_id(value: Any) -> str | None:
+    """Normalize framework/business ids to Langfuse's 32 lowercase hex id."""
+    if value is None:
+        return None
+    raw = str(value).strip().lower()
+    if not raw:
+        return None
+    compact = raw.replace("-", "")
+    if _LANGFUSE_TRACE_ID_RE.match(compact):
+        return compact
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def _correlation_trace_id(metadata: dict[str, Any]) -> str | None:
+    """Stable Langfuse-safe trace id used to group IC/NOC/GRL events."""
+    return _langfuse_trace_id(_raw_correlation_id(metadata))
+
+
+def _with_trace_context(kwargs: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+    raw_id = _raw_correlation_id(metadata)
+    trace_id = _langfuse_trace_id(raw_id)
+    if trace_id and "trace_context" not in kwargs:
+        kwargs["trace_context"] = {"trace_id": trace_id}
+        meta = kwargs.setdefault("metadata", {})
+        if isinstance(meta, dict):
+            meta.setdefault("framework_trace_id", raw_id)
+            meta.setdefault("langfuse_trace_id", trace_id)
+    return kwargs
 
 
 class LangfuseAnalyticsPublisher(AnalyticsPublisher):
@@ -100,6 +149,9 @@ class LangfuseAnalyticsPublisher(AnalyticsPublisher):
             "noc": _is_noc(event_type, metadata),
             "grl": _is_grl(event_type, metadata),
             "tag": body.get("tag") or metadata.get("tag") or event_type,
+            "request_id": body.get("request_id") or metadata.get("request_id") or body.get("requestId") or metadata.get("requestId"),
+            "trace_id": body.get("trace_id") or metadata.get("trace_id") or body.get("traceId") or metadata.get("traceId"),
+            "transaction_id": body.get("transaction_id") or metadata.get("transaction_id") or body.get("transactionId") or metadata.get("transactionId"),
             "sessionId": body.get("sessionId") or metadata.get("sessionId") or body.get("session_id") or metadata.get("session_id"),
             "messageId": body.get("messageId") or metadata.get("messageId") or body.get("message_id") or metadata.get("message_id"),
             "agentId": body.get("agentId") or metadata.get("agentId") or body.get("agent_id") or metadata.get("agent_id"),
@@ -114,30 +166,43 @@ class LangfuseAnalyticsPublisher(AnalyticsPublisher):
         # a experiência visual do backoffice original no Langfuse.
         try:
             if hasattr(self.langfuse, "start_as_current_observation"):
-                cm = self.langfuse.start_as_current_observation(
-                    name=event_type,
-                    as_type="span",
-                    input=envelope,
-                    metadata=langfuse_metadata,
-                )
+                kwargs = _with_trace_context({
+                    "name": event_type,
+                    "as_type": "span",
+                    "input": envelope,
+                    "metadata": langfuse_metadata,
+                }, langfuse_metadata)
+                try:
+                    cm = self.langfuse.start_as_current_observation(**kwargs)
+                except (TypeError, ValueError):
+                    kwargs.pop("trace_context", None)
+                    cm = self.langfuse.start_as_current_observation(**kwargs)
                 with cm as observation:
                     _update_observation(observation, output={"published": True})
                 return
         except Exception:
             logger.debug("Falha ao publicar Langfuse observation para %s", event_type, exc_info=True)
 
+        # Avoid raw langfuse.event(...) because older SDKs create a new trace row
+        # for every analytics event. Prefer attaching spans to the deterministic
+        # request trace when legacy trace/span APIs are available.
         try:
-            if hasattr(self.langfuse, "event"):
-                self.langfuse.event(name=event_type, input=envelope, metadata=langfuse_metadata)
-                return
-        except TypeError:
-            try:
-                self.langfuse.event(name=event_type, metadata=langfuse_metadata)
-                return
-            except Exception:
-                logger.debug("Falha ao publicar Langfuse event legado para %s", event_type, exc_info=True)
+            trace_id = _correlation_trace_id(langfuse_metadata)
+            if trace_id and hasattr(self.langfuse, "trace"):
+                trace = self.langfuse.trace(
+                    id=str(trace_id),
+                    name=str(langfuse_metadata.get("request_id") or langfuse_metadata.get("sessionId") or "agent_framework.request"),
+                    session_id=langfuse_metadata.get("sessionId"),
+                    user_id=langfuse_metadata.get("user_id") or langfuse_metadata.get("userId"),
+                    metadata={k: v for k, v in langfuse_metadata.items() if v is not None},
+                )
+                if hasattr(trace, "span"):
+                    span = trace.span(name=event_type, input=envelope, metadata=langfuse_metadata)
+                    if hasattr(span, "end"):
+                        span.end(output={"published": True})
+                    return
         except Exception:
-            logger.debug("Falha ao publicar Langfuse event para %s", event_type, exc_info=True)
+            logger.debug("Falha ao publicar Langfuse span correlacionado para %s", event_type, exc_info=True)
 
         try:
             if hasattr(self.langfuse, "span"):

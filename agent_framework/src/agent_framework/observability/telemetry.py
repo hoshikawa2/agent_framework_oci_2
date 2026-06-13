@@ -10,7 +10,9 @@ Recursos incluídos:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -30,6 +32,67 @@ def _langfuse_type(kind: str | None) -> str:
     if kind in _LANGFUSE_OBSERVATION_TYPES:
         return kind
     return "span"
+
+
+_LANGFUSE_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _raw_correlation_id(attrs: dict[str, Any] | None = None) -> str | None:
+    """Return the framework correlation id before Langfuse normalization."""
+    attrs = attrs or {}
+    ctx = get_observability_context().clean()
+    value = (
+        attrs.get("trace_id")
+        or ctx.get("trace_id")
+        or attrs.get("request_id")
+        or ctx.get("request_id")
+        or attrs.get("transaction_id")
+        or attrs.get("session_id")
+        or ctx.get("session_id")
+    )
+    return str(value) if value else None
+
+
+def _langfuse_trace_id(value: Any) -> str | None:
+    """Convert any framework correlation id into a valid Langfuse trace id.
+
+    Langfuse SDK v3 requires trace ids to be exactly 32 lowercase hexadecimal
+    characters. Framework ids are often UUIDs with dashes or business/session ids
+    such as ``man-bcbe3e05``. Passing those raw values makes the SDK raise
+    ``ValueError: invalid literal for int() with base 16``.
+
+    The mapping below is stable and deterministic:
+    - a valid 32-char hex id is reused as-is;
+    - a UUID with dashes is converted by removing dashes;
+    - every other id is md5-hashed into 32 lowercase hex chars.
+    """
+    if value is None:
+        return None
+    raw = str(value).strip().lower()
+    if not raw:
+        return None
+    compact = raw.replace("-", "")
+    if _LANGFUSE_TRACE_ID_RE.match(compact):
+        return compact
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def _correlation_trace_id(attrs: dict[str, Any] | None = None) -> str | None:
+    """Return a Langfuse-safe stable trace id for the current request."""
+    return _langfuse_trace_id(_raw_correlation_id(attrs))
+
+
+def _inject_langfuse_trace_context(kwargs: dict[str, Any], attrs: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Best-effort trace correlation for Langfuse SDK v3."""
+    raw_id = _raw_correlation_id(attrs or kwargs.get("metadata") or {})
+    trace_id = _langfuse_trace_id(raw_id)
+    if trace_id and "trace_context" not in kwargs:
+        kwargs["trace_context"] = {"trace_id": trace_id}
+        metadata = kwargs.setdefault("metadata", {})
+        if isinstance(metadata, dict):
+            metadata.setdefault("framework_trace_id", raw_id)
+            metadata.setdefault("langfuse_trace_id", trace_id)
+    return kwargs
 
 class Telemetry:
     def __init__(self, settings):
@@ -82,7 +145,9 @@ class Telemetry:
         attrs = context_metadata(attrs)
         if not attrs.get("request_id"):
             attrs["request_id"] = str(uuid4())
-            set_observability_context(request_id=attrs["request_id"])
+        if not attrs.get("trace_id"):
+            attrs["trace_id"] = str(attrs.get("request_id"))
+        set_observability_context(request_id=attrs.get("request_id"), trace_id=attrs.get("trace_id"))
         observation_cm = None
         observation = None
         logger.info("span.start %s %s", name, _safe(attrs))
@@ -135,12 +200,10 @@ class Telemetry:
         await self.event_bus.publish(name, payload, kind=kind)
         if not self.is_enabled():
             return
-        try:
-            if hasattr(self.langfuse, "event"):
-                self.langfuse.event(name=name, metadata=payload)
-                return
-        except Exception:
-            logger.exception("Falha ao enviar event via Langfuse.event")
+        # IMPORTANT: do not call ``langfuse.event(...)`` directly here. In SDK
+        # versions where there is no active parent observation, that API creates
+        # a new trace row for every telemetry event. We create a correlated
+        # observation instead, using request_id/trace_id as the stable trace id.
         try:
             cm = self._start_observation(name=name, as_type=_langfuse_type(kind), metadata={**payload, "event_kind": kind})
             if cm is not None:
@@ -168,17 +231,21 @@ class Telemetry:
                 kwargs["usage"] = usage
                 kwargs["usage_details"] = {k: usage.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "reasoning_tokens") if k in usage}
 
-            # Prefer explicit generation APIs when available because they expose the
-            # model column more reliably in Langfuse than a generic observation.
-            if hasattr(self.langfuse, "generation"):
-                gen = self.langfuse.generation(**{k: v for k, v in kwargs.items() if k != "as_type" and v is not None})
-                if hasattr(gen, "end"):
-                    gen.end(output=output, metadata=metadata)
-                return
+            # Prefer current/correlated generation APIs. Avoid raw
+            # ``langfuse.generation(...)`` first because it can create a separate
+            # trace row per LLM call when no current observation exists.
             if hasattr(self.langfuse, "start_as_current_generation"):
-                with self.langfuse.start_as_current_generation(**{k: v for k, v in kwargs.items() if k != "as_type" and v is not None}) as obs:
-                    self._update_observation(obs, output=output, model=model, metadata=metadata)
-                return
+                clean = {k: v for k, v in kwargs.items() if k != "as_type" and v is not None}
+                clean = _inject_langfuse_trace_context(clean, metadata)
+                try:
+                    with self.langfuse.start_as_current_generation(**clean) as obs:
+                        self._update_observation(obs, output=output, model=model, metadata=metadata)
+                    return
+                except TypeError:
+                    clean.pop("trace_context", None)
+                    with self.langfuse.start_as_current_generation(**clean) as obs:
+                        self._update_observation(obs, output=output, model=model, metadata=metadata)
+                    return
 
             cm = self._start_observation(**kwargs)
             if cm is not None:
@@ -231,9 +298,36 @@ class Telemetry:
             clean = {k: v for k, v in kwargs.items() if v is not None}
             if "as_type" in clean:
                 clean["as_type"] = _langfuse_type(clean.get("as_type"))
-            try: return self.langfuse.start_as_current_observation(**clean)
-            except TypeError:
-                return self.langfuse.start_as_current_observation(name=kwargs["name"], as_type=kwargs.get("as_type", "span"))
+            clean = _inject_langfuse_trace_context(clean, clean.get("metadata") or {})
+            try:
+                return self.langfuse.start_as_current_observation(**clean)
+            except (TypeError, ValueError):
+                # SDK version mismatch or invalid external trace id. The trace id
+                # is normalized above, but this guard keeps telemetry from
+                # breaking business execution if Langfuse changes validation.
+                clean.pop("trace_context", None)
+                try:
+                    return self.langfuse.start_as_current_observation(**clean)
+                except TypeError:
+                    return self.langfuse.start_as_current_observation(name=kwargs["name"], as_type=kwargs.get("as_type", "span"))
+        if hasattr(self.langfuse, "trace") and hasattr(self.langfuse, "span"):
+            # Legacy SDK fallback: create/reuse a deterministic trace and attach
+            # the span to it when the SDK supports trace(...).span(...).
+            legacy_metadata = dict(kwargs.get("metadata") or {})
+            trace_id = _correlation_trace_id(legacy_metadata)
+            try:
+                if trace_id:
+                    trace = self.langfuse.trace(
+                        id=str(trace_id),
+                        name=str(legacy_metadata.get("root_name") or legacy_metadata.get("workflow_id") or legacy_metadata.get("request_id") or "agent_framework.request"),
+                        session_id=legacy_metadata.get("session_id"),
+                        user_id=legacy_metadata.get("user_id"),
+                        metadata={k: v for k, v in legacy_metadata.items() if v is not None},
+                    )
+                    span = trace.span(name=kwargs["name"], input=kwargs.get("input"), output=kwargs.get("output"), metadata=legacy_metadata)
+                    return _LegacyObservationContext(span)
+            except Exception:
+                logger.debug("Falha ao criar span correlacionado via trace legado", exc_info=True)
         if hasattr(self.langfuse, "span"):
             legacy_metadata = dict(kwargs.get("metadata") or {})
             if kwargs.get("model") is not None:
@@ -257,8 +351,8 @@ class Telemetry:
             if attrs.get(key): trace_attrs[key] = attrs[key]
         if attrs.get("input"): trace_attrs["input"] = attrs["input"]
         if attrs.get("tags"): trace_attrs["tags"] = attrs["tags"]
-        if attrs.get("request_id") or attrs.get("agent_id") or attrs.get("tenant_id"):
-            trace_attrs["metadata"] = {k: attrs.get(k) for k in ("request_id", "agent_id", "tenant_id", "channel", "message_id", "ura_call_id") if attrs.get(k)}
+        if attrs.get("request_id") or attrs.get("trace_id") or attrs.get("agent_id") or attrs.get("tenant_id"):
+            trace_attrs["metadata"] = {k: attrs.get(k) for k in ("request_id", "trace_id", "agent_id", "tenant_id", "channel", "message_id", "ura_call_id", "workflow_id") if attrs.get(k)}
         if not trace_attrs: return
         try:
             if hasattr(observation, "update_trace"): observation.update_trace(**trace_attrs)
