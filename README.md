@@ -1973,6 +1973,70 @@ conversation_key
 trace_id
 ```
 
+#### 5.1.1.21.3. Instrumentação automática do cliente OpenAI pelo Langfuse
+
+
+```python
+ENABLE_LANGFUSE_OPENAI_AUTO_INSTRUMENTATION=true
+```
+
+habilita a instrumentação automática do cliente OpenAI pelo Langfuse.
+
+Quando habilitada, todas as chamadas realizadas através do cliente OpenAI instrumentado passam a gerar automaticamente spans e generations detalhadas no Langfuse.
+
+Benefícios
+
+Com a instrumentação automática ativada, o Langfuse passa a registrar informações como:
+
+* OpenAI-generation
+* Prompt enviado ao modelo
+* Resposta retornada pelo modelo
+* Modelo utilizado
+* Quantidade de tokens
+* Custos estimados
+* Latência da chamada
+* Erros de execução
+
+Essas informações ficam associadas ao trace principal da conversa, facilitando análise, troubleshooting e auditoria.
+
+Comportamento quando desabilitado
+
+Quando:
+
+```python
+ENABLE_LANGFUSE_OPENAI_AUTO_INSTRUMENTATION=false
+```
+
+ou a variável não está definida:
+
+* As chamadas LLM continuam funcionando normalmente.
+* Os spans customizados do framework continuam sendo emitidos.
+* O Langfuse deixa de criar automaticamente as entradas OpenAI-generation.
+* Menos detalhes ficam disponíveis para análise das chamadas ao modelo.
+
+Quando utilizar
+
+Recomenda-se habilitar em:
+
+* Ambientes de desenvolvimento.
+* Ambientes de homologação.
+* Ambientes de produção que necessitem observabilidade detalhada das chamadas LLM.
+* Cenários de troubleshooting, tuning de prompts e análise de custos.
+
+Observação
+
+Esta configuração afeta apenas a telemetria automática do Langfuse.
+
+Ela não altera:
+
+* O comportamento dos agentes.
+* O roteamento do Supervisor.
+* Guardrails.
+* Judges.
+* MCP Tool Router.
+* Fluxos LangGraph.
+
+Seu único objetivo é enriquecer a observabilidade das chamadas realizadas ao modelo de linguagem.
 ---
 
 ### 5.1.1.22. Recomendações de arquitetura
