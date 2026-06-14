@@ -9525,6 +9525,7 @@ text MCP
 
 text Explique o regulamento e consulte minha fatura.
 
+```text
 Fluxo:
 
 text RAG + MCP
@@ -9543,6 +9544,7 @@ Agente
 LLM
 ↓
 Resposta
+```
 
 ---
 

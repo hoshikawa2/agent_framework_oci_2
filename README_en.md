@@ -9544,6 +9544,7 @@ text MCP
 
 text Explain the policy and check my bill.
 
+```text
 Flow:
 
 text RAG + MCP
@@ -9562,6 +9563,7 @@ Agent
 LLM
 ↓
 Response
+```
 
 ---
 
