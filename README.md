@@ -9507,23 +9507,28 @@ Exemplo:
 
 #### Pergunta
 
-text Qual o regulamento do meu plano?
+Qual o regulamento do meu plano?
+
+```text 
 
 Fluxo:
 
-text RAG
+RAG
+```
 
 #### Pergunta
 
-text Qual o saldo da minha conta?
+Qual o saldo da minha conta?
 
+```text 
 Fluxo:
 
-text MCP
+MCP
+```
 
 #### Pergunta
 
-text Explique o regulamento e consulte minha fatura.
+Explique o regulamento e consulte minha fatura.
 
 ```text
 Fluxo:

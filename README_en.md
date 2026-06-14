@@ -9526,28 +9526,32 @@ Example:
 
 #### Question
 
-text What is the regulation of my plan?
-
-Flow:
-
-text RAG
-
-#### Question
-
-text What is my account balance?
-
-Flow:
-
-text MCP
-
-#### Question
-
-text Explain the policy and check my bill.
+What is the regulation of my plan?
 
 ```text
 Flow:
 
-text RAG + MCP
+RAG
+```
+
+#### Question
+
+What is my account balance?
+
+```text
+Flow:
+
+MCP
+```
+
+#### Question
+
+Explain the policy and check my bill.
+
+```text
+Flow:
+
+RAG + MCP
 
 Architecture:
 
