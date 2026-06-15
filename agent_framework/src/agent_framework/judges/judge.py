@@ -100,14 +100,15 @@ class CalibratedJudge:
         fail_closed: bool = True,
         max_context_chars: int = 12000,
         fallback_on_block: bool = False,
+        settings: Any | None = None,
     ):
-        self.llm = llm
+        self.llm = _ensure_judge_llm(llm, settings=settings)
         self.threshold = _clamp_score(threshold, default=self.default_threshold)
         self.profile_name = profile_name or 'judge'
         self.fail_closed = bool(fail_closed)
         self.max_context_chars = int(max_context_chars or 12000)
         self.fallback_on_block = bool(fallback_on_block)
-        self.client = CalibratedJudgeLLMClient(llm, default_profile=self.profile_name)
+        self.client = CalibratedJudgeLLMClient(self.llm, default_profile=self.profile_name)
 
     async def evaluate(self, question: str, answer: str, context: dict) -> JudgeResult:
         if not self.llm:
@@ -358,11 +359,11 @@ class JudgePipeline:
         settings: Any | None = None,
         enabled: bool | None = None,
     ):
+        self.settings = settings
         self.enabled = _resolve_global_enabled(settings, enabled)
         self.config_path = _resolve_config_path(settings, config_path)
         self.config = _load_judges_config(self.config_path)
-        self.settings = settings
-        self.llm = _ensure_judge_llm(llm, settings=settings)
+        self.llm = _ensure_judge_llm(llm, settings=settings) if self.enabled else llm
         self.judges = list(judges) if judges is not None else self._build_judges_from_config(self.llm)
 
     def _build_judges_from_config(self, llm: Any | None) -> list[Any]:
@@ -371,8 +372,8 @@ class JudgePipeline:
 
         if not self.config:
             return [
-                CalibratedResponseQualityJudge(llm, threshold=0.7, profile_name='judge', fail_closed=True),
-                CalibratedGroundednessJudge(llm, threshold=0.6, profile_name='judge', fail_closed=True),
+                CalibratedResponseQualityJudge(llm, threshold=0.7, profile_name='judge', fail_closed=True, settings=self.settings),
+                CalibratedGroundednessJudge(llm, threshold=0.6, profile_name='judge', fail_closed=True, settings=self.settings),
             ]
 
         if not _truthy(self.config.get('enabled'), True):
@@ -403,17 +404,17 @@ class JudgePipeline:
             elif judge_type in {'deterministic', 'deterministic_groundedness'} and code == 'groundedness':
                 built.append(GroundednessJudge(threshold=threshold or 0.6))
             elif code in {'response_quality', 'quality', 'rqlt'} or judge_type in {'response_quality', 'quality', 'rqlt', 'calibrated_quality'}:
-                built.append(CalibratedResponseQualityJudge(llm, threshold=threshold or 0.7, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block))
+                built.append(CalibratedResponseQualityJudge(llm, threshold=threshold or 0.7, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block, settings=self.settings))
             elif code in {'groundedness', 'aluc', 'hallucination'} or judge_type in {'groundedness', 'aluc', 'hallucination', 'calibrated_groundedness'}:
-                built.append(CalibratedGroundednessJudge(llm, threshold=threshold or 0.6, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block))
+                built.append(CalibratedGroundednessJudge(llm, threshold=threshold or 0.6, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block, settings=self.settings))
             elif code in {'sentiment', 'csi'} or judge_type in {'sentiment', 'csi'}:
-                judge = CalibratedSentimentJudge(llm, threshold=threshold or 0.0, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block)
+                judge = CalibratedSentimentJudge(llm, threshold=threshold or 0.0, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block, settings=self.settings)
                 judge.fail_on_negative = _truthy(spec.get('fail_on_negative'), False)
                 built.append(judge)
             elif code in {'tone', 'voice_tone', 'vctn'} or judge_type in {'tone', 'voice_tone', 'vctn'}:
-                built.append(CalibratedToneJudge(llm, threshold=threshold or 0.0, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block))
+                built.append(CalibratedToneJudge(llm, threshold=threshold or 0.0, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block, settings=self.settings))
             elif code in {'llm_judge', 'llm'} or judge_type in {'llm', 'llm_judge'}:
-                built.append(LLMJudge(llm, threshold=threshold or 0.7, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block))
+                built.append(LLMJudge(llm, threshold=threshold or 0.7, profile_name=profile, fail_closed=fail_closed, max_context_chars=max_context_chars, fallback_on_block=fallback_on_block, settings=self.settings))
             else:
                 logger.warning('Ignoring unknown judge in %s: %s', self.config_path, spec)
 
@@ -424,6 +425,44 @@ class JudgePipeline:
             return []
         return [await j.evaluate(question, answer, context or {}) for j in self.judges]
 
+
+
+class _JudgeLLMCreationErrorProxy:
+    """Truthful proxy used when the framework LLM cannot be created.
+
+    The object is intentionally truthy so calibrated judges do not report the
+    misleading "no LLM was provided" message. Instead, the real configuration
+    error is raised when the judge tries to invoke the model.
+    """
+
+    def __init__(self, exc: Exception):
+        self.exc = exc
+        self.model = None
+        self.provider_name = None
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(f"Não foi possível criar o LLM do judge a partir das configurações do framework: {self.exc}") from self.exc
+
+
+def _ensure_judge_llm(llm: Any | None, *, settings: Any | None = None) -> Any | None:
+    """Return a framework LLM for calibrated judges.
+
+    Several backends instantiate JudgePipeline without passing `llm`. Guardrails
+    already recover from that by creating the framework provider from Settings;
+    judges need the same behavior so `judges.yaml` + `llm_profiles.yaml` remains
+    the source of truth.
+    """
+    if llm is not None:
+        return llm
+    try:
+        from agent_framework.config.settings import get_settings
+        from agent_framework.llm.providers import create_llm
+
+        effective_settings = settings or get_settings()
+        return create_llm(effective_settings)
+    except Exception as exc:
+        logger.exception("Could not create framework LLM for calibrated judges")
+        return _JudgeLLMCreationErrorProxy(exc)
 
 def _resolve_global_enabled(settings: Any | None, enabled: bool | None) -> bool:
     if enabled is not None:
@@ -439,37 +478,6 @@ def _resolve_config_path(settings: Any | None, config_path: str | None) -> str:
     if settings is not None and getattr(settings, 'JUDGES_CONFIG_PATH', None):
         return str(getattr(settings, 'JUDGES_CONFIG_PATH'))
     return './config/judges.yaml'
-
-
-def _ensure_judge_llm(llm: Any | None, *, settings: Any | None = None) -> Any | None:
-    """Return the framework LLM provider used by calibrated judges.
-
-    Historically, some backends instantiated ``JudgePipeline`` with only
-    ``config_path``/``settings``. That left calibrated judges with ``llm=None``
-    and produced a fail-closed validation result even though ``judges.yaml`` and
-    ``llm_profiles.yaml`` were correctly configured.
-
-    This mirrors the guardrail behavior: when no explicit LLM is injected, build
-    the standard framework provider. The actual model/provider is still selected
-    per call by ``profile_name='judge'`` through ``llm_profiles.yaml``.
-    """
-    if llm is not None:
-        return llm
-    try:
-        effective_settings = settings
-        if effective_settings is None:
-            from agent_framework.config.settings import get_settings
-
-            effective_settings = get_settings()
-
-        from agent_framework.llm.providers import create_llm
-
-        created = create_llm(effective_settings)
-        logger.info('JudgePipeline auto-created framework LLM provider for calibrated judges')
-        return created
-    except Exception as exc:
-        logger.warning('JudgePipeline could not auto-create framework LLM provider: %s', exc)
-        return None
 
 
 def _load_judges_config(config_path: str | None) -> dict[str, Any]:
