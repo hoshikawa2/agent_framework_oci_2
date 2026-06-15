@@ -35,20 +35,20 @@ profiles:
 
   judge:
     provider: oci_openai
-    model: xopenai.gpt-4.1
+    model: openai.gpt-4.1
     temperature: 0
     max_tokens: 800
 
   # RAG
   rag_rewriter:
     provider: oci_openai
-    model: xopenai.gpt-4.1
+    model: openai.gpt-4.1
     temperature: 0
     max_tokens: 300
 
   rag_compressor:
     provider: oci_openai
-    model: xopenai.gpt-4.1
+    model: openai.gpt-4.1
     temperature: 0
     max_tokens: 1200
 
