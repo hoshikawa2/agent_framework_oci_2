@@ -361,7 +361,9 @@ class JudgePipeline:
         self.enabled = _resolve_global_enabled(settings, enabled)
         self.config_path = _resolve_config_path(settings, config_path)
         self.config = _load_judges_config(self.config_path)
-        self.judges = list(judges) if judges is not None else self._build_judges_from_config(llm)
+        self.settings = settings
+        self.llm = _ensure_judge_llm(llm, settings=settings)
+        self.judges = list(judges) if judges is not None else self._build_judges_from_config(self.llm)
 
     def _build_judges_from_config(self, llm: Any | None) -> list[Any]:
         if not self.enabled:
@@ -437,6 +439,37 @@ def _resolve_config_path(settings: Any | None, config_path: str | None) -> str:
     if settings is not None and getattr(settings, 'JUDGES_CONFIG_PATH', None):
         return str(getattr(settings, 'JUDGES_CONFIG_PATH'))
     return './config/judges.yaml'
+
+
+def _ensure_judge_llm(llm: Any | None, *, settings: Any | None = None) -> Any | None:
+    """Return the framework LLM provider used by calibrated judges.
+
+    Historically, some backends instantiated ``JudgePipeline`` with only
+    ``config_path``/``settings``. That left calibrated judges with ``llm=None``
+    and produced a fail-closed validation result even though ``judges.yaml`` and
+    ``llm_profiles.yaml`` were correctly configured.
+
+    This mirrors the guardrail behavior: when no explicit LLM is injected, build
+    the standard framework provider. The actual model/provider is still selected
+    per call by ``profile_name='judge'`` through ``llm_profiles.yaml``.
+    """
+    if llm is not None:
+        return llm
+    try:
+        effective_settings = settings
+        if effective_settings is None:
+            from agent_framework.config.settings import get_settings
+
+            effective_settings = get_settings()
+
+        from agent_framework.llm.providers import create_llm
+
+        created = create_llm(effective_settings)
+        logger.info('JudgePipeline auto-created framework LLM provider for calibrated judges')
+        return created
+    except Exception as exc:
+        logger.warning('JudgePipeline could not auto-create framework LLM provider: %s', exc)
+        return None
 
 
 def _load_judges_config(config_path: str | None) -> dict[str, Any]:
