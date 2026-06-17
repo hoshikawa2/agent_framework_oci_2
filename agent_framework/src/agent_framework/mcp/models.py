@@ -4,7 +4,10 @@ from pydantic import BaseModel, Field
 
 class MCPServerConfig(BaseModel):
     name: str
-    transport: Literal["http"] = "http"
+    # http = contrato legado simples do framework.
+    # fastmcp/streamable_http = protocolo MCP Streamable HTTP usado pelo FastMCP.
+    # sse = protocolo MCP SSE legado.
+    transport: Literal["http", "fastmcp", "streamable_http", "sse"] = "http"
     endpoint: str
     enabled: bool = True
     description: str = ""

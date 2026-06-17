@@ -22,7 +22,8 @@ dependencies = [
   "PyYAML>=6.0.2",
   "aiohttp>=3.9.0",
   "motor>=3.6.0",
-  "google-cloud-pubsub>=2.28.0"
+  "google-cloud-pubsub>=2.28.0",
+  "mcp>=1.9.0"
 ]
 
 [tool.setuptools.packages.find]

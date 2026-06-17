@@ -47,6 +47,9 @@ class LLMProfileResolver:
         "base_url",
         "api_key",
         "project_ocid",
+        "auth_mode",
+        "endpoint",
+        "region",
         "top_p",
         "frequency_penalty",
         "presence_penalty",
@@ -119,6 +122,9 @@ class LLMProfileResolver:
             "base_url": getattr(self.settings, "OCI_GENAI_BASE_URL", None),
             "api_key": getattr(self.settings, "OCI_GENAI_API_KEY", None),
             "project_ocid": getattr(self.settings, "OCI_GENAI_PROJECT_OCID", None),
+            "auth_mode": getattr(self.settings, "OCI_AUTH_MODE", "config_file"),
+            "endpoint": getattr(self.settings, "OCI_GENAI_ENDPOINT", None),
+            "region": getattr(self.settings, "OCI_REGION", None),
         }
 
     def resolve(self, profile_name: str | None = None, **runtime_overrides: Any) -> dict[str, Any]:

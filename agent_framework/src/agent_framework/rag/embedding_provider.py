@@ -61,8 +61,13 @@ class OCIEmbeddingProvider:
         if not self.compartment_id:
             raise ValueError("OCI_COMPARTMENT_ID is required when EMBEDDING_PROVIDER=oci")
 
-        config = oci.config.from_file(settings.OCI_CONFIG_FILE, settings.OCI_PROFILE)
-        self.client = GenerativeAiInferenceClient(config=config, service_endpoint=self.endpoint)
+        from agent_framework.oci.auth import get_oci_config_and_signer
+
+        config, signer = get_oci_config_and_signer(settings)
+        kwargs = {"config": config, "service_endpoint": self.endpoint}
+        if signer is not None:
+            kwargs["signer"] = signer
+        self.client = GenerativeAiInferenceClient(**kwargs)
 
     @staticmethod
     def _resolve_endpoint(settings) -> str:

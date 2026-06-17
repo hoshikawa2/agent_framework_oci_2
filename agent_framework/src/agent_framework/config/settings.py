@@ -31,10 +31,17 @@ class Settings(BaseSettings):
     OCI_GENAI_MODEL: str = 'openai.gpt-4.1'
     OCI_GENAI_API_KEY: str | None = None
     OCI_GENAI_PROJECT_OCID: str | None = None
+    # OCI SDK authentication mode.
+    # config_file = ~/.oci/config profile (default/local development)
+    # instance_principal = OCI Instance Principal signer (Compute/OKE without API key)
+    # resource_principal = OCI Resource Principal signer (Functions/resource principal contexts)
+    OCI_AUTH_MODE: Literal['config_file','instance_principal','resource_principal'] = 'config_file'
     OCI_CONFIG_FILE: str = '~/.oci/config'
     OCI_PROFILE: str = 'DEFAULT'
     OCI_COMPARTMENT_ID: str | None = None
     OCI_REGION: str = 'sa-saopaulo-1'
+    OCI_GENAI_ENDPOINT: str | None = None
+    OCI_EMBEDDING_ENDPOINT: str | None = None
 
     SESSION_REPOSITORY_PROVIDER: Literal['memory','sqlite','autonomous','oracle','mongodb'] = 'memory'
     MEMORY_REPOSITORY_PROVIDER: Literal['memory','sqlite','autonomous','oracle','mongodb'] = 'memory'
