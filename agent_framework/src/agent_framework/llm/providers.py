@@ -12,6 +12,52 @@ from agent_framework.billing.usage_repository import UsageRepository, UsageRecor
 logger = logging.getLogger("agent_framework.llm")
 
 
+def _clean_config_value(value: Any) -> str | None:
+    """Normalize values loaded from .env/YAML/PowerShell.
+
+    Removes accidental quotes/apostrophes and surrounding whitespace, which
+    otherwise may become URL-encoded as %27/%22 in OCI request endpoints.
+    """
+    if value is None:
+        return None
+    value = str(value).strip().strip("'\"").strip()
+    return value or None
+
+
+def _validate_openai_base_url(base_url: str | None, *, provider: str) -> str:
+    cleaned = _clean_config_value(base_url)
+    if not cleaned:
+        raise RuntimeError(
+            f"OCI_GENAI_BASE_URL é obrigatório para LLM_PROVIDER={provider}. "
+            "Para OpenAI-compatible, use o endpoint terminando com /openai/v1."
+        )
+    cleaned = cleaned.rstrip('/')
+    if '/openai/v1' not in cleaned:
+        raise RuntimeError(
+            f"Endpoint inválido para LLM_PROVIDER={provider}: {cleaned}. "
+            "OCI_GENAI_BASE_URL precisa conter/terminar com /openai/v1."
+        )
+    return cleaned
+
+
+def _validate_oci_sdk_base_url(base_url: str | None) -> str:
+    cleaned = _clean_config_value(base_url)
+    if not cleaned:
+        raise RuntimeError(
+            "OCI_GENAI_BASE_URL é obrigatório para LLM_PROVIDER=oci_sdk. "
+            "Use apenas o endpoint nativo/privado base, sem /openai/v1, /20231130 ou /actions/chat."
+        )
+    cleaned = cleaned.rstrip('/')
+    forbidden = ('/openai/v1', '/actions/chat', '/20231130', '/20240531')
+    if any(x in cleaned for x in forbidden):
+        raise RuntimeError(
+            f"Endpoint inválido para LLM_PROVIDER=oci_sdk: {cleaned}. "
+            "Para OCI SDK use apenas o host/base do endpoint, por exemplo "
+            "https://<private-dedicated-genai-endpoint>. O SDK monta /20231130/actions/chat automaticamente."
+        )
+    return cleaned
+
+
 class MockLLMProvider(LLMProvider):
     def __init__(self, settings=None, telemetry=None, usage_repository: UsageRepository | None = None):
         self.settings = settings
@@ -63,6 +109,12 @@ class OCICompatibleOpenAIProvider(LLMProvider):
         self.max_tokens = settings.LLM_MAX_TOKENS
         self.token_collector = TokenUsageCollector(settings)
         self._clients: dict[tuple[str | None, str | None, float | int | None, bool], Any] = {}
+
+        if self.provider_name in ("oci_openai", "openai_compatible"):
+            settings.OCI_GENAI_BASE_URL = _validate_openai_base_url(
+                getattr(settings, "OCI_GENAI_BASE_URL", None),
+                provider=self.provider_name,
+            )
 
         if not settings.OCI_GENAI_API_KEY and self.provider_name not in ("mock",):
             raise RuntimeError(
@@ -128,8 +180,8 @@ class OCICompatibleOpenAIProvider(LLMProvider):
         temperature = effective.get("temperature", self.temperature)
         max_tokens = effective.get("max_tokens", self.max_tokens)
         timeout = effective.get("timeout_seconds", getattr(self.settings, "LLM_TIMEOUT_SECONDS", 120))
-        base_url = effective.get("base_url") or getattr(self.settings, "OCI_GENAI_BASE_URL", None)
-        api_key = effective.get("api_key") or getattr(self.settings, "OCI_GENAI_API_KEY", None)
+        base_url = _clean_config_value(effective.get("base_url") or getattr(self.settings, "OCI_GENAI_BASE_URL", None))
+        api_key = _clean_config_value(effective.get("api_key") or getattr(self.settings, "OCI_GENAI_API_KEY", None))
         resolved_profile_name = effective.get("profile_name") or profile_name or "default"
         requested_profile_name = effective.get("requested_profile_name") or profile_name or "default"
         profile_source = effective.get("profile_source") or ("yaml" if effective.get("profiles_enabled") else "env")
@@ -159,6 +211,21 @@ class OCICompatibleOpenAIProvider(LLMProvider):
                 max_tokens=max_tokens,
                 timeout_seconds=timeout,
                 compartment_id=effective.get("compartment_id") or effective.get("project_ocid"),
+                # Regra do framework: OCI_GENAI_BASE_URL é usado em todos os providers.
+                # Para oci_sdk ele deve ser apenas o service endpoint base, sem /openai/v1.
+                endpoint=(
+                        effective.get("base_url")
+                        or effective.get("service_endpoint")
+                        or effective.get("endpoint")
+                        or getattr(self.settings, "OCI_GENAI_BASE_URL", None)
+                ),
+                # Regra do framework: em oci_sdk, OCI_GENAI_MODEL representa o endpoint_id
+                # quando o valor é um ocid1.generativeaiendpoint...
+                endpoint_id=(
+                        effective.get("endpoint_id")
+                        or effective.get("dedicated_endpoint_id")
+                        or model
+                ),
                 profile_name=resolved_profile_name,
                 requested_profile_name=requested_profile_name,
                 profile_source=profile_source,
@@ -171,6 +238,8 @@ class OCICompatibleOpenAIProvider(LLMProvider):
 
         if provider not in ("oci_openai", "openai_compatible"):
             raise ValueError(f"LLM provider não suportado no profile {resolved_profile_name}: {provider}")
+
+        base_url = _validate_openai_base_url(base_url, provider=provider)
 
         if not api_key:
             raise RuntimeError(
@@ -192,18 +261,18 @@ class OCICompatibleOpenAIProvider(LLMProvider):
                 request_kwargs[optional_key] = effective[optional_key]
 
         async with _maybe_span(
-            self.telemetry,
-            "llm.chat_completion",
-            provider=provider,
-            model=model,
-            profile_name=resolved_profile_name,
-            requested_profile_name=requested_profile_name,
-            profile_source=profile_source,
-            profile_found=profile_found,
-            component=component_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            profiles_enabled=bool(effective.get("profiles_enabled")),
+                self.telemetry,
+                "llm.chat_completion",
+                provider=provider,
+                model=model,
+                profile_name=resolved_profile_name,
+                requested_profile_name=requested_profile_name,
+                profile_source=profile_source,
+                profile_found=profile_found,
+                component=component_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                profiles_enabled=bool(effective.get("profiles_enabled")),
         ):
             try:
                 resp = await client.chat.completions.create(**request_kwargs)
@@ -282,8 +351,11 @@ class OpenAICompatibleProvider(OCICompatibleOpenAIProvider):
 class OCISDKProvider(LLMProvider):
     """OCI Generative AI via OCI Python SDK.
 
-    This provider supports API-key config files for local development and
-    instance/resource principals for OCI runtimes through OCI_AUTH_MODE.
+    Supports:
+    - Public regional endpoint
+    - Private/dedicated service endpoint
+    - OnDemandServingMode(model_id=...)
+    - DedicatedServingMode(endpoint_id=...)
     """
 
     def __init__(self, settings, telemetry=None, usage_repository: UsageRepository | None = None):
@@ -292,29 +364,46 @@ class OCISDKProvider(LLMProvider):
         self.usage_repository = usage_repository
         self.model = settings.OCI_GENAI_MODEL
         self.token_collector = TokenUsageCollector(settings)
-        self._client = None
+        self._clients: dict[str, Any] = {}
 
     @staticmethod
-    def _resolve_endpoint(settings, endpoint: str | None = None) -> str:
-        if endpoint:
-            return endpoint
-        configured = getattr(settings, "OCI_GENAI_ENDPOINT", None)
-        if configured:
-            return configured
-        region = getattr(settings, "OCI_REGION", "sa-saopaulo-1")
-        return f"https://inference.generativeai.{region}.oci.oraclecloud.com"
+    def _normalize_endpoint(endpoint: str | None) -> str | None:
+        # Para oci_sdk, OCI_GENAI_BASE_URL é obrigatório e deve ser apenas o host/base.
+        return _validate_oci_sdk_base_url(endpoint)
+
+    @classmethod
+    def _resolve_endpoint(cls, settings, endpoint: str | None = None) -> str:
+        # Regra do framework: OCI_GENAI_BASE_URL é o parâmetro único de endpoint
+        # também para o OCI SDK. Não usa OCI_GENAI_ENDPOINT como fonte principal.
+        configured = endpoint or getattr(settings, "OCI_GENAI_BASE_URL", None)
+        return cls._normalize_endpoint(configured)
 
     def _get_client(self, endpoint: str | None = None):
-        if self._client is None:
+        resolved_endpoint = self._resolve_endpoint(self.settings, endpoint)
+
+        if resolved_endpoint not in self._clients:
             from oci.generative_ai_inference import GenerativeAiInferenceClient
             from agent_framework.oci.auth import get_oci_config_and_signer
 
             config, signer = get_oci_config_and_signer(self.settings)
-            kwargs = {"config": config, "service_endpoint": self._resolve_endpoint(self.settings, endpoint)}
+
+            kwargs = {
+                "config": config,
+                "service_endpoint": resolved_endpoint,
+            }
+
             if signer is not None:
                 kwargs["signer"] = signer
-            self._client = GenerativeAiInferenceClient(**kwargs)
-        return self._client
+
+            self._clients[resolved_endpoint] = GenerativeAiInferenceClient(**kwargs)
+
+            logger.info(
+                "OCI SDK GenAI client inicializado service_endpoint=%s auth_mode=%s",
+                resolved_endpoint,
+                getattr(self.settings, "OCI_AUTH_MODE", "config_file"),
+            )
+
+        return self._clients[resolved_endpoint]
 
     @staticmethod
     def _to_prompt(messages) -> str:
@@ -325,43 +414,82 @@ class OCISDKProvider(LLMProvider):
             parts.append(f"{role}: {content}")
         return "\n".join(parts)
 
-    def _build_chat_details(self, *, messages, model: str, compartment_id: str, temperature: float, max_tokens: int):
+    def _build_serving_mode(self, *, model: str, endpoint_id: str | None):
         from oci.generative_ai_inference import models
 
-        serving_mode = models.OnDemandServingMode(model_id=model)
+        model = _clean_config_value(model) or ""
+        endpoint_id = _clean_config_value(endpoint_id)
 
-        # Prefer GenericChatRequest when available in the installed OCI SDK.
+        # Regra do framework: para LLM_PROVIDER=oci_sdk, OCI_GENAI_MODEL pode ser
+        # diretamente o ocid1.generativeaiendpoint... do endpoint dedicado.
+        if endpoint_id and endpoint_id.startswith("ocid1.generativeaiendpoint."):
+            if not hasattr(models, "DedicatedServingMode"):
+                raise RuntimeError(
+                    "OCI SDK instalado não possui DedicatedServingMode. "
+                    "Atualize o pacote oci para usar endpoint dedicado."
+                )
+
+            logger.info("Usando OCI GenAI DedicatedServingMode endpoint_id=%s", endpoint_id)
+            return models.DedicatedServingMode(endpoint_id=endpoint_id)
+
+        # Fallback para on-demand, caso alguém use OCI_GENAI_MODEL como nome/model id.
+        # Para dedicated endpoint, OCI_GENAI_MODEL deve começar com ocid1.generativeaiendpoint.
+        logger.info("Usando OCI GenAI OnDemandServingMode model_id=%s", model)
+        return models.OnDemandServingMode(model_id=model)
+
+    def _build_chat_details(
+            self,
+            *,
+            messages,
+            model: str,
+            endpoint_id: str | None,
+            compartment_id: str,
+            temperature: float,
+            max_tokens: int,
+    ):
+        from oci.generative_ai_inference import models
+
+        serving_mode = self._build_serving_mode(model=model, endpoint_id=endpoint_id)
+
         if hasattr(models, "GenericChatRequest") and hasattr(models, "UserMessage"):
             oci_messages = []
+
             for m in messages or []:
                 role = (m.get("role") if isinstance(m, dict) else getattr(m, "role", "user")) or "user"
                 content = (m.get("content") if isinstance(m, dict) else getattr(m, "content", "")) or ""
-                text_content = models.TextContent(text=str(content)) if hasattr(models, "TextContent") else str(content)
-                content_list = [text_content] if not isinstance(text_content, str) else str(content)
-                if role == "system" and hasattr(models, "SystemMessage"):
-                    oci_messages.append(models.SystemMessage(content=content_list))
-                elif role == "assistant" and hasattr(models, "AssistantMessage"):
-                    oci_messages.append(models.AssistantMessage(content=content_list))
+
+                if hasattr(models, "TextContent"):
+                    content_payload = [models.TextContent(text=str(content))]
                 else:
-                    oci_messages.append(models.UserMessage(content=content_list))
+                    content_payload = str(content)
+
+                if role == "system" and hasattr(models, "SystemMessage"):
+                    oci_messages.append(models.SystemMessage(content=content_payload))
+                elif role == "assistant" and hasattr(models, "AssistantMessage"):
+                    oci_messages.append(models.AssistantMessage(content=content_payload))
+                else:
+                    oci_messages.append(models.UserMessage(content=content_payload))
+
             chat_request = models.GenericChatRequest(
                 messages=oci_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
+
             return models.ChatDetails(
                 compartment_id=compartment_id,
                 serving_mode=serving_mode,
                 chat_request=chat_request,
             )
 
-        # Fallback for older SDKs / Cohere-style requests.
         prompt = self._to_prompt(messages)
+
         chat_request = models.CohereChatRequest(
             message=prompt,
             temperature=temperature,
             max_tokens=max_tokens,
         )
+
         return models.ChatDetails(
             compartment_id=compartment_id,
             serving_mode=serving_mode,
@@ -372,57 +500,81 @@ class OCISDKProvider(LLMProvider):
     def _extract_answer(response) -> str:
         data = getattr(response, "data", response)
         chat_response = getattr(data, "chat_response", None) or data
+
         for attr in ("text", "message", "output_text"):
             value = getattr(chat_response, attr, None)
             if value:
                 return str(value)
+
         choices = getattr(chat_response, "choices", None) or []
         if choices:
             first = choices[0]
             msg = getattr(first, "message", None)
             content = getattr(msg, "content", None) if msg is not None else getattr(first, "text", None)
+
             if isinstance(content, list):
                 chunks = []
                 for item in content:
                     chunks.append(str(getattr(item, "text", item)))
                 return "".join(chunks)
+
             if content:
                 return str(content)
+
         return str(chat_response)
 
     async def ainvoke(self, messages, **kwargs):
         import asyncio
 
-        model = kwargs.get("model") or self.model
+        model = _clean_config_value(kwargs.get("model") or self.model)
+        endpoint = _clean_config_value(kwargs.get("endpoint") or getattr(self.settings, "OCI_GENAI_BASE_URL", None))
+        # Regra do framework: OCI_GENAI_MODEL é o endpoint_id quando for dedicated.
+        endpoint_id = _clean_config_value(kwargs.get("endpoint_id") or model)
+
         temperature = kwargs.get("temperature", getattr(self.settings, "LLM_TEMPERATURE", 0.2))
         max_tokens = kwargs.get("max_tokens", getattr(self.settings, "LLM_MAX_TOKENS", 2048))
-        compartment_id = kwargs.get("compartment_id") or getattr(self.settings, "OCI_COMPARTMENT_ID", None) or getattr(self.settings, "OCI_GENAI_PROJECT_OCID", None)
+
+        compartment_id = (
+                kwargs.get("compartment_id")
+                or getattr(self.settings, "OCI_COMPARTMENT_ID", None)
+                or getattr(self.settings, "OCI_GENAI_PROJECT_OCID", None)
+        )
+
         profile_name = kwargs.get("profile_name", "default")
         component_name = kwargs.get("component_name") or kwargs.get("component") or profile_name
         generation_name = kwargs.get("generation_name") or f"llm.{component_name}"
 
         if not compartment_id:
-            raise RuntimeError("OCI_COMPARTMENT_ID or OCI_GENAI_PROJECT_OCID is required for LLM_PROVIDER=oci_sdk")
+            raise RuntimeError(
+                "OCI_COMPARTMENT_ID or OCI_GENAI_PROJECT_OCID is required for LLM_PROVIDER=oci_sdk"
+            )
+
+        service_endpoint = self._resolve_endpoint(self.settings, endpoint)
 
         async with _maybe_span(
-            self.telemetry,
-            "llm.chat_completion",
-            provider="oci_sdk",
-            model=model,
-            profile_name=profile_name,
-            component=component_name,
-            auth_mode=getattr(self.settings, "OCI_AUTH_MODE", "config_file"),
-            temperature=temperature,
-            max_tokens=max_tokens,
+                self.telemetry,
+                "llm.chat_completion",
+                provider="oci_sdk",
+                model=model,
+                endpoint_id=endpoint_id,
+                service_endpoint=service_endpoint,
+                profile_name=profile_name,
+                component=component_name,
+                auth_mode=getattr(self.settings, "OCI_AUTH_MODE", "config_file"),
+                temperature=temperature,
+                max_tokens=max_tokens,
         ):
-            client = self._get_client(kwargs.get("endpoint"))
+            client = self._get_client(service_endpoint)
+
             details = self._build_chat_details(
                 messages=messages,
                 model=model,
+                endpoint_id=endpoint_id,
                 compartment_id=compartment_id,
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
+
             response = await asyncio.to_thread(client.chat, details)
             answer = self._extract_answer(response)
 
@@ -435,15 +587,26 @@ class OCISDKProvider(LLMProvider):
                 "estimated_usage": True,
                 "provider": "oci_sdk",
                 "model": model,
+                "endpoint_id": endpoint_id,
+                "service_endpoint": service_endpoint,
                 "component": component_name,
                 "profile_name": profile_name,
                 "auth_mode": getattr(self.settings, "OCI_AUTH_MODE", "config_file"),
             }
+
             llm_metadata = dict(usage_metadata)
+
             if self.usage_repository:
                 await self.usage_repository.record(
-                    UsageRecord.from_usage("oci_sdk", model, generation_name, usage_metadata, llm_metadata)
+                    UsageRecord.from_usage(
+                        "oci_sdk",
+                        model,
+                        generation_name,
+                        usage_metadata,
+                        llm_metadata,
+                    )
                 )
+
             if self.telemetry:
                 await self.telemetry.generation(
                     name=generation_name,
@@ -453,6 +616,7 @@ class OCISDKProvider(LLMProvider):
                     metadata=llm_metadata,
                     usage=usage_metadata,
                 )
+
             return answer
 
 
