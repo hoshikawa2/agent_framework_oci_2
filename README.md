@@ -330,7 +330,7 @@ LANGFUSE_SECRET_KEY=<secret-key>
 LANGFUSE_HOST=http://localhost:3005
 ```
 
-### 4.1.1 Configuração de Provedor LLM e Autenticação OCI
+### 4.1.1. Configuração de Provedor LLM e Autenticação OCI
 
 O Agent Framework OCI suporta múltiplos provedores de LLM e diferentes mecanismos de autenticação. O comportamento é controlado principalmente pelas variáveis:
 

@@ -330,7 +330,7 @@ LANGFUSE_SECRET_KEY=<secret-key>
 LANGFUSE_HOST=http://localhost:3005
 ```
 
-### 4.1.1 LLM Provider and OCI Authentication Configuration
+### 4.1.1. LLM Provider and OCI Authentication Configuration
 
 The Agent Framework OCI supports multiple LLM providers and authentication mechanisms.
 
