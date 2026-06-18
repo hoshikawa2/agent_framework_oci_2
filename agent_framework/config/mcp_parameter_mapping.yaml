@@ -1,6 +1,6 @@
 mcp_parameter_mapping:
   defaults:
-    use_mock: true
+    use_mock: false
   tools:
     consultar_fatura:
       map:

@@ -53,4 +53,7 @@ def solicitar_devolucao(order_id: str | None = None, motivo: str | None = None) 
 
 
 if __name__ == "__main__":
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = 8002
+
     mcp.run(transport="streamable-http")

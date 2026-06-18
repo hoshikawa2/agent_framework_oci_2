@@ -62,5 +62,6 @@ def listar_servicos(msisdn: str | None = None) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    # FastMCP exposes the official MCP endpoint, usually /mcp for streamable HTTP.
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = 8001
     mcp.run(transport="streamable-http")

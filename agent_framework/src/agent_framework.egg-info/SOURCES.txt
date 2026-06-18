@@ -156,6 +156,8 @@ src/agent_framework/observability/telemetry.py
 src/agent_framework/observability/tim_backoffice_contract.py
 src/agent_framework/observability/token_cost.py
 src/agent_framework/observability/workflow_events.py
+src/agent_framework/oci/__init__.py
+src/agent_framework/oci/auth.py
 src/agent_framework/persistence/__init__.py
 src/agent_framework/persistence/mongodb_store.py
 src/agent_framework/persistence/oracle_store.py
