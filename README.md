@@ -329,6 +329,71 @@ LANGFUSE_PUBLIC_KEY=<public-key>
 LANGFUSE_SECRET_KEY=<secret-key>
 LANGFUSE_HOST=http://localhost:3005
 ```
+
+### 4.1.1 Configuração de Provedor LLM e Autenticação OCI
+
+O Agent Framework OCI suporta múltiplos provedores de LLM e diferentes mecanismos de autenticação. O comportamento é controlado principalmente pelas variáveis:
+
+- `LLM_PROVIDER`
+- `OCI_AUTH_MODE`
+- `OCI_GENAI_API_KEY`
+
+### LLM_PROVIDER
+
+**LLM_PROVIDER**=mock
+
+Utiliza um modelo simulado para desenvolvimento e testes.
+
+**LLM_PROVIDER**=oci_openai
+
+Utiliza o endpoint OpenAI-Compatible do OCI Generative AI.
+Utiliza `OCI_GENAI_API_KEY`.
+
+**LLM_PROVIDER**=oci_sdk
+
+Utiliza o SDK nativo do OCI Generative AI.
+Utiliza `OCI_AUTH_MODE`.
+
+**LLM_PROVIDER**=openai_compatible
+
+Utiliza qualquer endpoint compatível com a API OpenAI.
+
+### OCI_AUTH_MODE
+
+Utilizado apenas quando:
+
+```env
+LLM_PROVIDER=oci_sdk
+```
+
+**OCI_AUTH_MODE**=config_file
+
+Autentica utilizando `~/.oci/config`.
+
+**OCI_AUTH_MODE**=instance_principal
+
+Autentica utilizando OCI Instance Principals.
+
+**OCI_AUTH_MODE**=resource_principal
+
+Autentica utilizando OCI Resource Principals.
+
+### OCI_GENAI_API_KEY
+
+API Key utilizada pelo provider `oci_openai`.
+
+### Matriz de Configuração
+
+| LLM_PROVIDER | OCI_AUTH_MODE | OCI_GENAI_API_KEY | Método |
+|-------------|-------------|-------------|-------------|
+| mock | Ignorado | Não | Nenhum |
+| oci_openai | Ignorado | Sim | API Key |
+| oci_sdk | config_file | Não | OCI Config File |
+| oci_sdk | instance_principal | Não | Instance Principal |
+| oci_sdk | resource_principal | Não | Resource Principal |
+| openai_compatible | Ignorado | Não | API Key do endpoint |
+
+
 ---
 
 ### 4.2.`llm_profiles.yaml`
