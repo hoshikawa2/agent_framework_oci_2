@@ -7139,6 +7139,482 @@ E em call_tool() adicione os serviços mock:
         }
 ```
 
+### 15.4. MCP via FastMCP no Agent Framework OCI
+
+A seguir, será explicado como ativar e configurar a integração do Agent Framework OCI com servidores MCP implementados com FastMCP.
+
+### 15.4.1. O que é esta opção
+
+O framework suporta dois modos de integração com MCP:
+
+1. **HTTP legado**  
+   Usa o contrato simples do próprio framework:
+
+   ```text
+   GET  /mcp/tools/list
+   POST /mcp/tools/call
+   ```
+
+2. **FastMCP / MCP oficial**  
+   Usa o protocolo MCP oficial via transporte `streamable-http`, normalmente exposto em:
+
+   ```text
+   http://localhost:8001/mcp
+   ```
+
+A opção FastMCP permite que o framework consuma servidores MCP reais, criados com:
+
+```python
+from mcp.server.fastmcp import FastMCP
+```
+
+### 15.4.2. Dependências necessárias
+
+No ambiente virtual do projeto:
+
+```bash
+pip install "mcp>=1.28.0"
+```
+
+Valide:
+
+```bash
+pip show mcp
+```
+
+Exemplo esperado:
+
+```text
+Name: mcp
+Version: 1.28.0
+Summary: Model Context Protocol SDK
+```
+
+### 15.4.3. Exemplo de MCP Server FastMCP
+
+Exemplo de servidor Telecom na porta `8001`:
+
+```python
+from __future__ import annotations
+
+from typing import Any
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("telecom_mcp_server")
+
+
+@mcp.tool()
+def consultar_fatura(msisdn: str | None = None, invoice_id: str | None = None) -> dict[str, Any]:
+    """Consulta dados resumidos de fatura por msisdn/invoice_id."""
+    print(">>> EXECUTOU consultar_fatura", msisdn, invoice_id, flush=True)
+    return {
+        "invoice_id": invoice_id or "INV-EXEMPLO-001",
+        "msisdn": msisdn or "11999999999",
+        "valor_total": 249.90,
+        "vencimento": "2026-06-10",
+        "status": "ABERTA",
+        "itens": [
+            {"descricao": "Plano Controle 50GB", "valor": 149.90},
+            {"descricao": "Roaming internacional", "valor": 50.00},
+            {"descricao": "Serviços digitais", "valor": 50.00},
+        ],
+    }
+
+
+@mcp.tool()
+def consultar_pagamentos(msisdn: str | None = None) -> dict[str, Any]:
+    """Consulta histórico de pagamentos do cliente."""
+    return {
+        "msisdn": msisdn or "11999999999",
+        "pagamentos": [
+            {"data": "2026-05-10", "valor": 199.90, "status": "CONFIRMADO"},
+            {"data": "2026-04-10", "valor": 189.90, "status": "CONFIRMADO"},
+        ],
+    }
+
+
+if __name__ == "__main__":
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = 8001
+    mcp.run(transport="streamable-http")
+```
+
+### 15.4.4. Como subir o servidor MCP
+
+Exemplo:
+
+```bash
+cd mcp_servers/telecom_mcp_server
+python main_fastmcp.py
+```
+
+O servidor deve expor:
+
+```text
+http://localhost:8001/mcp
+```
+
+Logs esperados quando o framework conectar:
+
+```text
+Created new transport with session ID: ...
+POST /mcp HTTP/1.1 200 OK
+GET /mcp HTTP/1.1 200 OK
+Processing request of type CallToolRequest
+```
+
+### 15.4.5. Configuração no framework
+
+### `config/mcp_servers.yaml`
+
+Configure o transporte como `fastmcp` e a URL do endpoint `/mcp`:
+
+```yaml
+servers:
+  telecom:
+    transport: fastmcp
+    endpoint: http://localhost:8001/mcp
+    enabled: true
+    description: MCP Server de exemplo para domínio Telecom.
+
+  retail:
+    transport: fastmcp
+    endpoint: http://localhost:8002/mcp
+    enabled: true
+    description: MCP Server de exemplo para domínio Retail.
+```
+
+Também são aceitos aliases como:
+
+```yaml
+transport: streamable_http
+```
+
+ou:
+
+```yaml
+transport: sse
+```
+
+quando o servidor estiver usando SSE.
+
+### 15.4.6. Configuração das tools
+
+### `config/tools.yaml`
+
+Cada tool precisa apontar para o servidor correto:
+
+```yaml
+tools:
+  consultar_fatura:
+    enabled: true
+    server: telecom
+    description: Consulta fatura do cliente.
+
+  consultar_pagamentos:
+    enabled: true
+    server: telecom
+    description: Consulta histórico de pagamentos.
+
+  consultar_plano:
+    enabled: true
+    server: telecom
+    description: Consulta plano ativo.
+
+  listar_servicos:
+    enabled: true
+    server: telecom
+    description: Lista serviços ativos.
+```
+
+O nome da tool no YAML precisa bater exatamente com o nome da função decorada no FastMCP:
+
+```python
+@mcp.tool()
+def consultar_fatura(...):
+    ...
+```
+
+### 15.4.7. Desligar mock
+
+Se o framework estiver chamando a tool, mas não bater no FastMCP, verifique `use_mock`.
+
+Procure:
+
+```bash
+grep -R "use_mock" agent_template_backend/config agent_framework -n
+```
+
+Evite:
+
+```yaml
+defaults:
+  use_mock: true
+```
+
+Use:
+
+```yaml
+defaults:
+  use_mock: false
+```
+
+ou remova o parâmetro.
+
+Quando `use_mock=True`, o framework pode simular o resultado e não chamar o servidor real.
+
+### 15.4.8. Mapeamento de parâmetros
+
+### `config/mcp_parameter_mapping.yaml`
+
+Exemplo:
+
+```yaml
+mcp_parameter_mapping:
+  defaults:
+    use_mock: false
+
+  tools:
+    consultar_fatura:
+      map:
+        customer_key: msisdn
+        contract_key: invoice_id
+        interaction_key: ura_call_id
+        session_key: session_id
+
+    consultar_pagamentos:
+      map:
+        customer_key: msisdn
+        interaction_key: ura_call_id
+        session_key: session_id
+```
+
+Esse arquivo transforma o `BusinessContext` canônico do framework nos argumentos esperados pela tool MCP.
+
+Exemplo:
+
+```text
+customer_key → msisdn
+contract_key → invoice_id
+```
+
+Assim, uma entrada como:
+
+```json
+{
+  "customer_key": "11999999999",
+  "contract_key": "3000131180"
+}
+```
+
+vira:
+
+```json
+{
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180"
+}
+```
+
+### 15.4.9. Validação isolada do servidor
+
+Crie um arquivo `test_fastmcp.py`:
+
+```python
+import asyncio
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+
+async def test():
+    async with streamablehttp_client("http://localhost:8001/mcp") as streams:
+        read, write = streams[0], streams[1]
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            tools = await session.list_tools()
+            print("TOOLS:", tools)
+
+            result = await session.call_tool(
+                "consultar_fatura",
+                arguments={
+                    "msisdn": "11999999999",
+                    "invoice_id": "3000131180",
+                },
+            )
+            print("RESULT:", result)
+
+
+asyncio.run(test())
+```
+
+Execute:
+
+```bash
+python test_fastmcp.py
+```
+
+O esperado é que `tools` contenha:
+
+```text
+consultar_fatura
+consultar_pagamentos
+consultar_plano
+listar_servicos
+```
+
+Se aparecer:
+
+```text
+tools=[]
+```
+
+o problema está no servidor, não no framework.
+
+### 15.4.10. Mensagem `Tool not listed`
+
+A mensagem:
+
+```text
+Tool 'consultar_fatura' not listed, no validation will be performed
+```
+
+indica que a tool não apareceu na lista de tools conhecida pela sessão MCP.
+
+Ela pode ocorrer quando:
+
+1. O servidor FastMCP subiu sem tools registradas.
+2. O código recriou `mcp = FastMCP(...)` no `__main__`.
+3. O cliente chamou `call_tool()` sem uma descoberta prévia via `list_tools()`.
+4. O endpoint chamado não é o mesmo servidor que contém as tools.
+
+Se `list_tools()` retornar `tools=[]`, a causa mais comum é recriar o objeto `mcp` depois dos decorators.
+
+### 15.4.11. Logs esperados no framework
+
+Quando o framework chama corretamente uma tool FastMCP, devem aparecer logs semelhantes a:
+
+```text
+MCPToolRouter carregado enabled=True servers=['telecom', 'retail']
+mcp.tool.mapped tool=consultar_fatura server=telecom
+span.start mcp.tool_call tool_name=consultar_fatura mcp_server=telecom
+fastmcp.tools.listed server=telecom tools=['consultar_fatura', ...]
+fastmcp.tool_call.normalized tool=consultar_fatura server=telecom ok=True result_type=dict error=None
+```
+
+Se aparecer:
+
+```text
+use_mock=True
+```
+
+então a chamada pode estar sendo desviada para mock.
+
+### 15.4.12. Contrato de retorno interno
+
+O FastMCP retorna um `CallToolResult`, normalmente com conteúdo em `TextContent.text`.
+
+O framework precisa normalizar esse retorno para o contrato interno:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "invoice_id": "3000131180",
+    "msisdn": "11999999999",
+    "valor_total": 249.90,
+    "vencimento": "2026-06-10",
+    "status": "ABERTA"
+  },
+  "metadata": {
+    "transport": "fastmcp",
+    "server": "telecom",
+    "tool": "consultar_fatura"
+  }
+}
+```
+
+Se a normalização falhar, o agente pode cair em fallback com mensagem parecida com:
+
+```text
+No momento, não foi possível acessar as informações da sua fatura.
+```
+
+### 15.4.13. Checklist rápido
+
+Antes de testar pelo agente, valide:
+
+```bash
+pip show mcp
+```
+
+```bash
+python test_fastmcp.py
+```
+
+Confirme que:
+
+```text
+tools != []
+```
+
+Depois valide no framework:
+
+```bash
+grep -R "use_mock" agent_template_backend/config agent_framework -n
+```
+
+E confirme no `mcp_servers.yaml`:
+
+```yaml
+transport: fastmcp
+endpoint: http://localhost:8001/mcp
+```
+
+### 15.4.14. Ordem recomendada para subir a stack
+
+Terminal 1 — MCP Telecom:
+
+```bash
+cd mcp_servers/telecom_mcp_server
+python main_fastmcp.py
+```
+
+Terminal 2 — MCP Retail:
+
+```bash
+cd mcp_servers/retail_mcp_server
+python main_fastmcp.py
+```
+
+Terminal 3 — Backend Agent Framework:
+
+```bash
+cd agent_template_backend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Terminal 4 — Frontend:
+
+```bash
+cd agent_frontend
+npm run dev
+```
+
+### 15.4.15. Resumo
+
+Para ativar MCP via FastMCP:
+
+1. Suba um servidor com `FastMCP`.
+2. Registre as tools com `@mcp.tool()`.
+3. Não recrie o objeto `mcp` no `__main__`.
+4. Configure `mcp_servers.yaml` com `transport: fastmcp` e endpoint `/mcp`.
+5. Configure `tools.yaml` apontando cada tool para o server correto.
+6. Garanta `use_mock: false`.
+7. Valide com `session.list_tools()` antes de testar pelo agente.
+
+
+
 ---
 
 ## 16. IC, NOC e GRL no novo agente

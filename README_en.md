@@ -7162,6 +7162,370 @@ because the MCP catalog does not contain those tool names.
 
 After this change, the FinanceiroAgent can execute successfully against the mock MCP Server without requiring any integration with external billing or ERP systems.
 
+### 15.4. MCP via FastMCP in Agent Framework OCI
+
+This section explains how to enable and configure the integration between Agent Framework OCI and MCP servers implemented with FastMCP.
+
+### 15.4.1. What is this option
+
+The framework supports two MCP integration modes:
+
+1. **Legacy HTTP**
+   Uses the framework’s own simple contract:
+
+   ```text
+   GET  /mcp/tools/list
+   POST /mcp/tools/call
+   ```
+
+2. **FastMCP / Official MCP**
+   Uses the official MCP protocol through the `streamable-http` transport, typically exposed at:
+
+   ```text
+   http://localhost:8001/mcp
+   ```
+
+The FastMCP option allows the framework to consume real MCP servers created with:
+
+```python
+from mcp.server.fastmcp import FastMCP
+```
+
+### 15.4.2. Required dependencies
+
+Inside the project virtual environment:
+
+```bash
+pip install "mcp>=1.28.0"
+```
+
+Validate the installation:
+
+```bash
+pip show mcp
+```
+
+Expected output:
+
+```text
+Name: mcp
+Version: 1.28.0
+Summary: Model Context Protocol SDK
+```
+
+### 15.4.3. FastMCP Server Example
+
+Example of a Telecom MCP server running on port `8001`:
+
+```python
+# code example preserved
+```
+
+### 15.4.4. How to start the MCP server
+
+Example:
+
+```bash
+cd mcp_servers/telecom_mcp_server
+python main_fastmcp.py
+```
+
+The server should expose:
+
+```text
+http://localhost:8001/mcp
+```
+
+Expected logs when the framework connects:
+
+```text
+Created new transport with session ID: ...
+POST /mcp HTTP/1.1 200 OK
+GET /mcp HTTP/1.1 200 OK
+Processing request of type CallToolRequest
+```
+
+### 15.4.5. Framework configuration
+
+#### `config/mcp_servers.yaml`
+
+Configure the transport as `fastmcp` and point it to the `/mcp` endpoint:
+
+```yaml
+# code example preserved
+```
+
+The following aliases are also supported:
+
+```yaml
+transport: streamable_http
+```
+
+or:
+
+```yaml
+transport: sse
+```
+
+when the server is using Server-Sent Events (SSE).
+
+### 15.4.6. Tool configuration
+
+#### `config/tools.yaml`
+
+Each tool must point to the correct server:
+
+```yaml
+# code example preserved
+```
+
+The tool name defined in YAML must exactly match the name of the function decorated in FastMCP:
+
+```python
+@mcp.tool()
+def consultar_fatura(...):
+    ...
+```
+
+### 15.4.7. Disable mock mode
+
+If the framework appears to be calling the tool but never reaches the FastMCP server, verify the `use_mock` configuration.
+
+Search for:
+
+```bash
+grep -R "use_mock" agent_template_backend/config agent_framework -n
+```
+
+Avoid:
+
+```yaml
+defaults:
+  use_mock: true
+```
+
+Use:
+
+```yaml
+defaults:
+  use_mock: false
+```
+
+or remove the parameter entirely.
+
+When `use_mock=True`, the framework may simulate the tool response instead of calling the real server.
+
+### 15.4.8. Parameter mapping
+
+#### `config/mcp_parameter_mapping.yaml`
+
+Example:
+
+```yaml
+# code example preserved
+```
+
+This file transforms the framework’s canonical `BusinessContext` into the arguments expected by the MCP tool.
+
+Example:
+
+```text
+customer_key → msisdn
+contract_key → invoice_id
+```
+
+As a result, an input such as:
+
+```json
+{
+  "customer_key": "11999999999",
+  "contract_key": "3000131180"
+}
+```
+
+becomes:
+
+```json
+{
+  "msisdn": "11999999999",
+  "invoice_id": "3000131180"
+}
+```
+
+### 15.4.9. Standalone server validation
+
+Create a file named `test_fastmcp.py`:
+
+```python
+# code example preserved
+```
+
+Run:
+
+```bash
+python test_fastmcp.py
+```
+
+The expected result is that `tools` contains:
+
+```text
+consultar_fatura
+consultar_pagamentos
+consultar_plano
+listar_servicos
+```
+
+If you see:
+
+```text
+tools=[]
+```
+
+the issue is in the server, not in the framework.
+
+### 15.4.10. `Tool not listed` message
+
+The message:
+
+```text
+Tool 'consultar_fatura' not listed, no validation will be performed
+```
+
+indicates that the tool did not appear in the list of tools known by the MCP session.
+
+This can happen when:
+
+1. The FastMCP server started without any registered tools.
+2. The code recreated `mcp = FastMCP(...)` inside the `__main__` block.
+3. The client called `call_tool()` without first discovering tools through `list_tools()`.
+4. The endpoint being called is not the same server that contains the tools.
+
+If `list_tools()` returns `tools=[]`, the most common cause is recreating the `mcp` object after the decorators have already registered the tools.
+
+### 15.4.11. Expected framework logs
+
+When the framework successfully calls a FastMCP tool, logs similar to the following should appear:
+
+```text
+MCPToolRouter loaded enabled=True servers=['telecom', 'retail']
+mcp.tool.mapped tool=consultar_fatura server=telecom
+span.start mcp.tool_call tool_name=consultar_fatura mcp_server=telecom
+fastmcp.tools.listed server=telecom tools=['consultar_fatura', ...]
+fastmcp.tool_call.normalized tool=consultar_fatura server=telecom ok=True result_type=dict error=None
+```
+
+If you see:
+
+```text
+use_mock=True
+```
+
+the call may be redirected to a mock implementation.
+
+### 15.4.12. Internal return contract
+
+FastMCP returns a `CallToolResult`, typically with its content stored in `TextContent.text`.
+
+The framework must normalize that response into the internal contract:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "invoice_id": "3000131180",
+    "msisdn": "11999999999",
+    "valor_total": 249.90,
+    "vencimento": "2026-06-10",
+    "status": "ABERTA"
+  },
+  "metadata": {
+    "transport": "fastmcp",
+    "server": "telecom",
+    "tool": "consultar_fatura"
+  }
+}
+```
+
+If normalization fails, the agent may fall back to a generic response such as:
+
+```text
+At the moment, it was not possible to retrieve your invoice information.
+```
+
+### 15.4.13. Quick checklist
+
+Before testing through the agent, validate:
+
+```bash
+pip show mcp
+```
+
+```bash
+python test_fastmcp.py
+```
+
+Confirm that:
+
+```text
+tools != []
+```
+
+Then validate within the framework:
+
+```bash
+grep -R "use_mock" agent_template_backend/config agent_framework -n
+```
+
+And confirm in `mcp_servers.yaml`:
+
+```yaml
+transport: fastmcp
+endpoint: http://localhost:8001/mcp
+```
+
+### 15.4.14. Recommended startup order
+
+Terminal 1 — Telecom MCP:
+
+```bash
+cd mcp_servers/telecom_mcp_server
+python main_fastmcp.py
+```
+
+Terminal 2 — Retail MCP:
+
+```bash
+cd mcp_servers/retail_mcp_server
+python main_fastmcp.py
+```
+
+Terminal 3 — Agent Framework Backend:
+
+```bash
+cd agent_template_backend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Terminal 4 — Frontend:
+
+```bash
+cd agent_frontend
+npm run dev
+```
+
+### 15.4.15. Summary
+
+To enable MCP via FastMCP:
+
+1. Start a FastMCP server.
+2. Register tools with `@mcp.tool()`.
+3. Do not recreate the `mcp` object inside `__main__`.
+4. Configure `mcp_servers.yaml` with `transport: fastmcp` and the `/mcp` endpoint.
+5. Configure `tools.yaml` so each tool points to the correct server.
+6. Ensure `use_mock: false`.
+7. Validate with `session.list_tools()` before testing through the agent.
+
+
 ---
 
 ## 16. IC, NOC and GRL in the new agent
