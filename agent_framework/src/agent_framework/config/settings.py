@@ -123,6 +123,20 @@ class Settings(BaseSettings):
     PUBSUB_PAYLOAD_MODE: Literal['flat','legacy','envelope','wrapped'] = 'flat'
     # Match the old Observer behavior: NOC.* goes to OTel Logs, not Pub/Sub.
     PUBSUB_EXCLUDE_NOC: bool = True
+
+    # Automatic TIM/Data Pub/Sub sequence generation.
+    # auto: Redis if configured; otherwise MongoDB if configured; otherwise memory fallback.
+    # mongodb: atomic find_one_and_update/$inc, matching the legacy TIM Observer behavior.
+    PUBSUB_SEQUENCE_ENABLED: bool = True
+    PUBSUB_SEQUENCE_PROVIDER: Literal['auto','redis','mongodb','mongo','memory','none'] = 'auto'
+    PUBSUB_SEQUENCE_REDIS_URL: str | None = None
+    PUBSUB_SEQUENCE_MONGODB_URI: str | None = None
+    PUBSUB_SEQUENCE_MONGODB_DATABASE: str | None = None
+    PUBSUB_SEQUENCE_MONGODB_COLLECTION: str = 'observer_sequences'
+    PUBSUB_SEQUENCE_TTL_SECONDS: int = 86400
+    PUBSUB_SEQUENCE_MEMORY_FALLBACK: bool = True
+    PUBSUB_SEQUENCE_KEY_PREFIX: str = 'observer:sequence'
+
     ANALYTICS_FAIL_SILENT: bool = True
 
     ENABLE_OCI_STREAMING: bool = False

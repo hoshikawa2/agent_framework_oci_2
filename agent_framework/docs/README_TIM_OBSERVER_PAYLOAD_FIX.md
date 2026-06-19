@@ -21,8 +21,9 @@ Esta versão corrige dois gaps da migração do `agent_framework_oci`:
 
 - `src/agent_framework/analytics/tim_sequence.py`
   - Novo gerador de sequence por `agentId/sessionId`.
-  - Usa Redis `INCR` como contador atômico cross-worker/cross-pod.
-  - Usa fallback em memória quando Redis não estiver disponível, sem quebrar o fluxo de observabilidade.
+  - Suporta Redis `INCR` como contador atômico cross-worker/cross-pod.
+  - Suporta MongoDB com `find_one_and_update` + `$inc`, mantendo paridade com a lib antiga.
+  - Usa fallback em memória quando o backend compartilhado não estiver disponível, sem quebrar o fluxo de observabilidade.
   - Preserva `sequence` explícito quando o chamador já informou o campo.
 
 - `src/agent_framework/observability/noc_otel.py`
@@ -46,7 +47,19 @@ PUBSUB_EXCLUDE_NOC=true
 
 # Sequence automático por sessão no payload Pub/Sub flat
 PUBSUB_SEQUENCE_ENABLED=true
-PUBSUB_SEQUENCE_REDIS_URL=redis://localhost:6379/0
+
+# auto = Redis se configurado; senão MongoDB se configurado; senão fallback em memória.
+# Para o BO sem OCI Cache, usar mongodb para manter paridade com a lib antiga.
+PUBSUB_SEQUENCE_PROVIDER=mongodb
+
+# Opção Redis, quando existir cache disponível
+# PUBSUB_SEQUENCE_REDIS_URL=redis://localhost:6379/0
+
+# Opção MongoDB, equivalente ao comportamento antigo via find_one_and_update + $inc
+PUBSUB_SEQUENCE_MONGODB_URI=mongodb://localhost:27017
+PUBSUB_SEQUENCE_MONGODB_DATABASE=agent_platform
+PUBSUB_SEQUENCE_MONGODB_COLLECTION=observer_sequences
+
 PUBSUB_SEQUENCE_TTL_SECONDS=86400
 PUBSUB_SEQUENCE_MEMORY_FALLBACK=true
 PUBSUB_SEQUENCE_KEY_PREFIX=observer:sequence
@@ -106,5 +119,40 @@ Regras:
 
 - Se `sequence` já vier no metadata/payload, ele é preservado.
 - Se `sessionId` não existir, o campo não é gerado.
-- Redis é o caminho recomendado para produção, pois `INCR` é atômico entre workers/pods.
+- MongoDB é suportado para cenários sem OCI Cache/Redis e usa operação atômica `find_one_and_update` com `$inc`, como na lib antiga.
+- Redis continua suportado quando houver cache disponível, pois `INCR` é atômico entre workers/pods.
 - O fallback em memória é apenas best-effort local para ambientes de desenvolvimento ou contingência.
+
+
+### Sequence com MongoDB
+
+Para ambientes do BO onde não existe OCI Cache/Redis dimensionado, configure:
+
+```env
+PUBSUB_SEQUENCE_ENABLED=true
+PUBSUB_SEQUENCE_PROVIDER=mongodb
+PUBSUB_SEQUENCE_MONGODB_URI=mongodb://<host>:27017
+PUBSUB_SEQUENCE_MONGODB_DATABASE=agent_platform
+PUBSUB_SEQUENCE_MONGODB_COLLECTION=observer_sequences
+PUBSUB_SEQUENCE_TTL_SECONDS=86400
+PUBSUB_SEQUENCE_MEMORY_FALLBACK=true
+```
+
+O documento no Mongo usa `_id` igual à chave lógica:
+
+```text
+observer:sequence:<agentId>:<sessionId>
+```
+
+A atualização é atômica:
+
+```python
+find_one_and_update(
+    {"_id": key},
+    {"$inc": {"sequence": 1}},
+    upsert=True,
+    return_document=AFTER,
+)
+```
+
+Também é criado, em best-effort, um índice TTL sobre `expiresAt`. Se o usuário Mongo não tiver permissão para criar índice, a geração de sequence continua funcionando; apenas a limpeza automática pode depender de rotina externa.
