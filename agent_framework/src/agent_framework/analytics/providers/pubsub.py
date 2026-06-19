@@ -7,6 +7,7 @@ import os
 from typing import Any
 
 from agent_framework.analytics.tim_payload_mapper import map_analytics_event_to_tim_flat_payload
+from agent_framework.analytics.tim_sequence import ensure_sequence
 
 from agent_framework.analytics.publisher import AnalyticsPublisher
 
@@ -81,6 +82,7 @@ class PubSubAnalyticsPublisher(AnalyticsPublisher):
             message = {"type": event_type, "payload": payload}
         else:
             message = map_analytics_event_to_tim_flat_payload(event_type, payload, keep_none=False)
+            message = await ensure_sequence(message)
 
         data = json.dumps(message, default=str, ensure_ascii=False).encode("utf-8")
         attributes = {
