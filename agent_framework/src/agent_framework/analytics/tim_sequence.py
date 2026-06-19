@@ -60,8 +60,24 @@ def _mongo_database() -> str:
     )
 
 
+def _legacy_agent_name() -> str:
+    return _safe_part(os.getenv("AGENT_NAME") or "agent", "agent")
+
+
 def _mongo_collection() -> str:
-    return os.getenv("PUBSUB_SEQUENCE_MONGODB_COLLECTION") or "observer_sequences"
+    """Return the MongoDB collection used for observer sequence counters.
+
+    TIM legacy deployments used an agent-specific collection name, commonly
+    ``{agent_name}_event_counters``. Keep an explicit env override for BO
+    environments that already provisioned the collection, and fall back to the
+    legacy naming convention when no collection is configured.
+    """
+    return (
+        os.getenv("PUBSUB_SEQUENCE_MONGODB_COLLECTION")
+        or os.getenv("MONGODB_EVENT_COUNTERS_COLLECTION")
+        or os.getenv("EVENT_COUNTERS_COLLECTION")
+        or f"{_legacy_agent_name()}_event_counters"
+    )
 
 
 def _ttl_seconds() -> int:

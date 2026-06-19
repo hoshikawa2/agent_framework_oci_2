@@ -57,9 +57,8 @@ PUBSUB_SEQUENCE_PROVIDER=mongodb
 
 # Opção MongoDB, equivalente ao comportamento antigo via find_one_and_update + $inc
 PUBSUB_SEQUENCE_MONGODB_URI=mongodb://localhost:27017
-# PUBSUB_SEQUENCE_REDIS_URL=redis://localhost:6379/0
 PUBSUB_SEQUENCE_MONGODB_DATABASE=agent_platform
-PUBSUB_SEQUENCE_MONGODB_COLLECTION=observer_sequences
+PUBSUB_SEQUENCE_MONGODB_COLLECTION=${AGENT_NAME}_event_counters
 
 PUBSUB_SEQUENCE_TTL_SECONDS=86400
 PUBSUB_SEQUENCE_MEMORY_FALLBACK=true
@@ -134,7 +133,7 @@ PUBSUB_SEQUENCE_ENABLED=true
 PUBSUB_SEQUENCE_PROVIDER=mongodb
 PUBSUB_SEQUENCE_MONGODB_URI=mongodb://<host>:27017
 PUBSUB_SEQUENCE_MONGODB_DATABASE=agent_platform
-PUBSUB_SEQUENCE_MONGODB_COLLECTION=observer_sequences
+PUBSUB_SEQUENCE_MONGODB_COLLECTION=${AGENT_NAME}_event_counters
 PUBSUB_SEQUENCE_TTL_SECONDS=86400
 PUBSUB_SEQUENCE_MEMORY_FALLBACK=true
 ```
@@ -157,3 +156,24 @@ find_one_and_update(
 ```
 
 Também é criado, em best-effort, um índice TTL sobre `expiresAt`. Se o usuário Mongo não tiver permissão para criar índice, a geração de sequence continua funcionando; apenas a limpeza automática pode depender de rotina externa.
+
+### Collection Mongo compatível com legado
+
+Quando `PUBSUB_SEQUENCE_PROVIDER=mongodb`, a collection dos contadores pode ser informada explicitamente:
+
+```env
+PUBSUB_SEQUENCE_MONGODB_COLLECTION=telecom_contas_event_counters
+```
+
+Se essa variável não for definida, o framework usa o padrão legado:
+
+```text
+{AGENT_NAME}_event_counters
+```
+
+Também são aceitos, por compatibilidade operacional:
+
+```env
+MONGODB_EVENT_COUNTERS_COLLECTION=telecom_contas_event_counters
+EVENT_COUNTERS_COLLECTION=telecom_contas_event_counters
+```
