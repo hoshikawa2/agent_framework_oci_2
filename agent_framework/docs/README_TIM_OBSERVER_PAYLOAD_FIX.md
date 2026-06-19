@@ -57,6 +57,7 @@ PUBSUB_SEQUENCE_PROVIDER=mongodb
 
 # Opção MongoDB, equivalente ao comportamento antigo via find_one_and_update + $inc
 PUBSUB_SEQUENCE_MONGODB_URI=mongodb://localhost:27017
+# PUBSUB_SEQUENCE_REDIS_URL=redis://localhost:6379/0
 PUBSUB_SEQUENCE_MONGODB_DATABASE=agent_platform
 PUBSUB_SEQUENCE_MONGODB_COLLECTION=observer_sequences
 
