@@ -44,6 +44,43 @@ def _checkpoint_id(checkpoint: dict[str, Any] | None) -> str:
     return str(uuid.uuid4())
 
 
+def _normalize_pending_writes(pending_writes: Any) -> list[tuple[Any, Any, Any]]:
+    """Normalize persisted pending_writes to LangGraph's expected runtime format.
+
+    LangGraph 1.1.x expects CheckpointTuple.pending_writes to be an iterable of
+    3-item tuples: (task_id, channel, value).
+
+    Older framework versions persisted writes as dictionaries containing
+    task_id, task_path, channel and value. Some stores/tests may also contain
+    4-item tuples: (task_id, task_path, channel, value). This adapter accepts
+    those legacy forms while preserving already-correct 3-item tuples.
+    """
+    normalized: list[tuple[Any, Any, Any]] = []
+    for item in pending_writes or []:
+        if isinstance(item, dict):
+            normalized.append((
+                item.get("task_id"),
+                item.get("channel"),
+                item.get("value"),
+            ))
+            continue
+
+        if isinstance(item, (list, tuple)):
+            if len(item) == 3:
+                task_id, channel, value = item
+                normalized.append((task_id, channel, value))
+                continue
+            if len(item) == 4:
+                task_id, _task_path, channel, value = item
+                normalized.append((task_id, channel, value))
+                continue
+
+        # Defensive fallback: keep malformed legacy entries from crashing resume.
+        # Use a synthetic channel so the data remains inspectable in telemetry/logs.
+        normalized.append((None, "__malformed_pending_write__", item))
+    return normalized
+
+
 class RepositoryCheckpointSaver(BaseCheckpointSaver):
     """Checkpoint saver nativo para LangGraph usando os repositories do framework."""
 
@@ -70,7 +107,7 @@ class RepositoryCheckpointSaver(BaseCheckpointSaver):
         checkpoint = payload.get("checkpoint") or {}
         metadata = payload.get("metadata") or {}
         parent_config = payload.get("parent_config")
-        pending_writes = payload.get("pending_writes") or []
+        pending_writes = _normalize_pending_writes(payload.get("pending_writes") or [])
         try:
             from langgraph.checkpoint.base import CheckpointTuple
             return CheckpointTuple(config=config, checkpoint=checkpoint, metadata=metadata, parent_config=parent_config, pending_writes=pending_writes)
