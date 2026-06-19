@@ -6,6 +6,8 @@ import logging
 import os
 from typing import Any
 
+from agent_framework.analytics.tim_payload_mapper import map_analytics_event_to_tim_flat_payload
+
 from agent_framework.analytics.publisher import AnalyticsPublisher
 
 logger = logging.getLogger("agent_framework.analytics.pubsub")
@@ -36,6 +38,8 @@ class PubSubAnalyticsPublisher(AnalyticsPublisher):
         self.topic_path = self._resolve_topic_path(topic_path, project_id=project_id, topic_id=topic_id)
         self.ordering_key = ordering_key or os.getenv("GCP_PUBSUB_ORDERING_KEY") or ""
         self.timeout_seconds = float(timeout_seconds or os.getenv("GCP_PUBSUB_TIMEOUT_SECONDS") or 30)
+        self.payload_mode = (os.getenv("PUBSUB_PAYLOAD_MODE") or os.getenv("ANALYTICS_PUBSUB_PAYLOAD_MODE") or "flat").strip().lower()
+        self.exclude_noc = (os.getenv("PUBSUB_EXCLUDE_NOC") or "true").strip().lower() in {"1", "true", "yes", "y", "on"}
 
         from google.cloud import pubsub_v1  # type: ignore
 
@@ -67,14 +71,23 @@ class PubSubAnalyticsPublisher(AnalyticsPublisher):
         raise ValueError("Configure GCP_PUBSUB_TOPIC_PATH, AGENT_PUBSUB_TOPIC ou GCP_PROJECT_ID + GCP_PUBSUB_TOPIC")
 
     async def publish(self, event_type: str, payload: dict[str, Any]) -> None:
-        envelope = {"type": event_type, "payload": payload}
-        data = json.dumps(envelope, default=str, ensure_ascii=False).encode("utf-8")
+        metadata = payload.get("metadata") if isinstance(payload, dict) else None
+        is_noc = str(event_type).startswith("NOC.") or (isinstance(metadata, dict) and metadata.get("noc") is True)
+        if is_noc and self.exclude_noc:
+            logger.debug("analytics.pubsub.skipped_noc event_type=%s", event_type)
+            return
+
+        if self.payload_mode in {"legacy", "envelope", "wrapped"}:
+            message = {"type": event_type, "payload": payload}
+        else:
+            message = map_analytics_event_to_tim_flat_payload(event_type, payload, keep_none=False)
+
+        data = json.dumps(message, default=str, ensure_ascii=False).encode("utf-8")
         attributes = {
             "event_type": str(event_type),
             "source": str(payload.get("source") or "agent_framework"),
         }
-        metadata = payload.get("metadata") if isinstance(payload, dict) else None
-        if isinstance(metadata, dict) and metadata.get("noc") is True:
+        if is_noc:
             attributes["noc"] = "true"
 
         kwargs: dict[str, Any] = dict(attributes)

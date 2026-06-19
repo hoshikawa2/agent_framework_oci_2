@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from agent_framework.analytics import AnalyticsPublisher, build_analytics_event, create_analytics_publisher
+from agent_framework.observability.noc_otel import emit_noc_event
 
 logger = logging.getLogger("agent_framework.observability.observer")
 
@@ -66,6 +67,10 @@ class AgentObserver:
     ) -> dict[str, Any]:
         payload, metadata = _apply_control_defaults(event_type, payload, metadata)
         event = build_analytics_event(event_type, payload, source=source, metadata=metadata)
+
+        is_noc = str(event_type).startswith("NOC.") or metadata.get("noc") is True
+        if is_noc:
+            emit_noc_event(event_type, event)
 
         if self.emit_analytics:
             await self.analytics.publish(event_type, event)

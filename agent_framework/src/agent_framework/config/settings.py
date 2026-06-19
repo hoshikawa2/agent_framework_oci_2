@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     ENABLE_OTEL: bool = False
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     OTEL_SERVICE_NAME: str = 'ai-agent-template'
+    # Dedicated NOC OpenTelemetry Logs channel. This is separate from trace/span OTel.
+    ENABLE_NOC_OTEL_LOGS: bool = False
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: str | None = None
+    OTEL_EXPORTER_OTLP_HOST_HEADER: str | None = None
 
     ENABLE_ANALYTICS: bool = False
     ANALYTICS_PROVIDERS: str = 'oci_streaming'
@@ -115,6 +119,10 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: str | None = None
     GCP_PUBSUB_TOPIC: str | None = None
     GCP_PUBSUB_TIMEOUT_SECONDS: float = 30.0
+    # flat = TIM/Data canonical contract. legacy/envelope keeps the old framework wrapper.
+    PUBSUB_PAYLOAD_MODE: Literal['flat','legacy','envelope','wrapped'] = 'flat'
+    # Match the old Observer behavior: NOC.* goes to OTel Logs, not Pub/Sub.
+    PUBSUB_EXCLUDE_NOC: bool = True
     ANALYTICS_FAIL_SILENT: bool = True
 
     ENABLE_OCI_STREAMING: bool = False
